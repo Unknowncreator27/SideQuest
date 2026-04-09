@@ -326,7 +326,7 @@ export default function QuestFeed() {
             <Flame size={32} className="mx-auto text-primary mb-3" />
             <h3 className="text-xl font-bold mb-2">Ready to Take On a Quest?</h3>
             <p className="text-muted-foreground text-sm mb-4">Sign in to start completing quests and earning XP</p>
-            <a href={getLoginUrl()}>
+            <a href="/login">
               <button
                 className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl font-bold text-sm"
                 style={{

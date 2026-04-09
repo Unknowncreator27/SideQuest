@@ -534,7 +534,7 @@ export default function QuestDetail() {
             <LogIn size={32} className="mx-auto text-muted-foreground/30 mb-3" />
             <h3 className="text-lg font-bold mb-2">Sign In to Complete This Quest</h3>
             <p className="text-sm text-muted-foreground mb-4">You need an account to submit proof and earn XP</p>
-            <a href={getLoginUrl()}>
+            <a href="/login">
               <button className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl font-bold text-sm"
                 style={{ background: "linear-gradient(135deg, oklch(0.72 0.22 165), oklch(0.65 0.22 240))", color: "oklch(0.08 0.01 260)" }}>
                 <Zap size={14} />

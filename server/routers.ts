@@ -24,6 +24,10 @@ import {
   getUnreadNotificationCount,
   getTeamInvitationsByUser,
   getUserById,
+  getDb,
+  getAllUsers,
+  countAdmins,
+  updateUserRole,
   hasUserCompletedQuest,
   markNotificationsRead,
   saveFilterPreset,
@@ -42,8 +46,8 @@ import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
 import { eq } from "drizzle-orm";
-import { getDb } from "./db";
 import { questProposals } from "../drizzle/schema";
+import { ENV } from "./_core/env";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -382,6 +386,49 @@ const userRouter = router({
   leaderboard: publicProcedure.query(async () => {
     return getLeaderboard(50);
   }),
+
+  listAll: protectedProcedure.query(async ({ ctx }) => {
+    if (ctx.user.role !== "admin") {
+      throw new TRPCError({ code: "FORBIDDEN" });
+    }
+    return await getAllUsers();
+  }),
+
+  setRole: protectedProcedure
+    .input(
+      z.object({
+        userId: z.number(),
+        role: z.enum(["user", "admin"]),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (ctx.user.role !== "admin") {
+        throw new TRPCError({ code: "FORBIDDEN" });
+      }
+
+      const targetUser = await getUserById(input.userId);
+      if (!targetUser) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "User not found" });
+      }
+
+      if (targetUser.openId === ENV.ownerOpenId && input.role !== "admin") {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "The owner account must remain an admin" });
+      }
+
+      if (targetUser.role === input.role) {
+        return { success: true };
+      }
+
+      if (targetUser.role === "admin" && input.role === "user") {
+        const adminCount = await countAdmins();
+        if (adminCount <= 1) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Cannot remove the last admin" });
+        }
+      }
+
+      await updateUserRole(input.userId, input.role);
+      return { success: true };
+    }),
 });
 
 const teamRouter = router({

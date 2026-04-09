@@ -200,7 +200,7 @@ export default function Home() {
                 </>
               ) : (
                 <>
-                  <a href={getLoginUrl()}>
+                  <Link href="/login">
                     <button
                       className="flex items-center gap-2 px-6 py-3 rounded-xl font-bold text-sm tracking-wider transition-all duration-200"
                       style={{
@@ -213,7 +213,7 @@ export default function Home() {
                       START YOUR QUEST
                       <ArrowRight size={14} />
                     </button>
-                  </a>
+                  </Link>
                   <Link href="/quests">
                     <button className="btn-game px-6 py-3 text-sm tracking-wider">
                       VIEW QUESTS
@@ -387,7 +387,7 @@ export default function Home() {
                 Join your crew, take on side quests, and prove you have what it takes to reach legendary status.
               </p>
               {!isAuthenticated ? (
-                <a href={getLoginUrl()}>
+                <a href="/login">
                   <button
                     className="inline-flex items-center gap-2 px-8 py-3 rounded-xl font-bold text-sm tracking-wider"
                     style={{

@@ -2,14 +2,16 @@ import "dotenv/config";
 import express from "express";
 import { createServer } from "http";
 import net from "net";
+import path from "path";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
-import { registerOAuthRoutes } from "./oauth";
+import { registerAuthRoutes } from "./authRoutes";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { getDb } from "../db";
 import { users, quests } from "../../drizzle/schema";
 import { eq } from "drizzle-orm";
+import bcrypt from "bcrypt";
 import { ENV } from "./env";
 
 function isPortAvailable(port: number): Promise<boolean> {
@@ -37,8 +39,8 @@ async function startServer() {
   // Configure body parser with larger size limit for file uploads
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
-  // OAuth callback under /api/oauth/callback
-  registerOAuthRoutes(app);
+  // Auth routes (OAuth, login, register, logout)
+  registerAuthRoutes(app);
   // tRPC API
   app.use(
     "/api/trpc",
@@ -47,6 +49,10 @@ async function startServer() {
       createContext,
     })
   );
+
+  // Serve uploaded files
+  app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
+
   // development mode uses Vite, production mode uses static files
   if (process.env.NODE_ENV === "development") {
     await setupVite(app, server);
@@ -66,19 +72,55 @@ async function startServer() {
   });
 }
 
+async function seedOwnerAdmin() {
+  try {
+    const db = await getDb();
+    if (!db) return;
+
+    const ownerOpenId = ENV.ownerOpenId || "owner";
+    const ownerEmail = ownerOpenId.startsWith("email:") ? ownerOpenId.split(":")[1] : null;
+    const adminPassword = process.env.ADMIN_PASSWORD;
+
+    const ownerValues: any = {
+      openId: ownerOpenId,
+      name: "Quest Master",
+      role: "admin",
+    };
+
+    if (ownerEmail) {
+      ownerValues.email = ownerEmail;
+      ownerValues.loginMethod = "email-password";
+    }
+
+    if (adminPassword) {
+      ownerValues.password = await bcrypt.hash(adminPassword, 10);
+    }
+
+    await db.insert(users).values(ownerValues).onDuplicateKeyUpdate({
+      set: {
+        name: ownerValues.name,
+        role: ownerValues.role,
+        email: ownerValues.email ?? null,
+        loginMethod: ownerValues.loginMethod ?? null,
+        ...(ownerValues.password ? { password: ownerValues.password } : {}),
+      },
+    });
+  } catch (err) {
+    console.warn("[Seed] Failed to seed owner admin:", err);
+  }
+}
+
 async function seedDefaultQuestsIfEmpty() {
   try {
     const db = await getDb();
     if (!db) return;
     const existing = await db.select().from(quests).limit(1);
     if (existing.length > 0) return;
-    // Find or create owner
-    let owner = (await db.select().from(users).where(eq(users.openId, ENV.ownerOpenId ?? "owner")).limit(1))[0];
+    let owner = (await db.select().from(users).where(eq(users.openId, ENV.ownerOpenId || "owner")).limit(1))[0];
     if (!owner) {
-      await db.insert(users).values({ openId: ENV.ownerOpenId ?? "owner", name: "Quest Master", role: "admin" });
-      owner = (await db.select().from(users).where(eq(users.openId, ENV.ownerOpenId ?? "owner")).limit(1))[0];
+      console.warn("[Seed] Owner admin not found yet; skipping quest seeding.");
+      return;
     }
-    if (!owner) return;
     const DEFAULT_QUESTS = [
       { title: "Touch Grass", description: "Go outside and touch actual grass. Take a photo of your hand on the grass to prove it. Bonus points if you look like you're having a spiritual moment.", xpReward: 50, difficulty: "easy" as const },
       { title: "Cold Shower Challenge", description: "Take a full cold shower for at least 2 minutes. Record a short video of yourself stepping into the cold water and surviving the experience.", xpReward: 150, difficulty: "medium" as const },
@@ -104,5 +146,8 @@ async function seedDefaultQuestsIfEmpty() {
 
 startServer().catch(console.error);
 
-// Seed after a short delay to allow DB to be ready
-setTimeout(seedDefaultQuestsIfEmpty, 3000);
+// Seed owner admin and default quests after a short delay to allow DB to be ready
+setTimeout(() => {
+  seedOwnerAdmin();
+  seedDefaultQuestsIfEmpty();
+}, 3000);

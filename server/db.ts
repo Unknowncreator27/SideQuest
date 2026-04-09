@@ -45,7 +45,7 @@ export async function upsertUser(user: InsertUser): Promise<void> {
   const values: InsertUser = { openId: user.openId };
   const updateSet: Record<string, unknown> = {};
 
-  const textFields = ["name", "email", "loginMethod"] as const;
+  const textFields = ["name", "email", "loginMethod", "password"] as const;
   for (const field of textFields) {
     const value = user[field];
     if (value === undefined) continue;
@@ -84,6 +84,42 @@ export async function getUserById(id: number) {
   if (!db) return undefined;
   const result = await db.select().from(users).where(eq(users.id, id)).limit(1);
   return result[0];
+}
+
+export async function getAllUsers() {
+  const db = await getDb();
+  if (!db) return [];
+
+  return db
+    .select({
+      id: users.id,
+      name: users.name,
+      email: users.email,
+      role: users.role,
+      createdAt: users.createdAt,
+    })
+    .from(users)
+    .orderBy(desc(users.role), users.name);
+}
+
+export async function countAdmins() {
+  const db = await getDb();
+  if (!db) return 0;
+
+  const result = await db
+    .select({ count: sql`COUNT(*)` })
+    .from(users)
+    .where(eq(users.role, "admin"));
+
+  return Number(result[0]?.count ?? 0);
+}
+
+export async function updateUserRole(id: number, role: "user" | "admin") {
+  const db = await getDb();
+  if (!db) return false;
+
+  await db.update(users).set({ role, updatedAt: new Date() }).where(eq(users.id, id));
+  return true;
 }
 
 export async function addXpToUser(

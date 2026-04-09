@@ -11,6 +11,7 @@ import {
   LogOut,
   Menu,
   Plus,
+  Shield,
   Swords,
   User,
   X,
@@ -148,7 +149,10 @@ export default function NavBar() {
     { href: "/quests", label: "QUESTS", icon: <Compass size={15} /> },
     { href: "/leaderboard", label: "RANKINGS", icon: <Crown size={15} /> },
     ...(isAuthenticated ? [{ href: "/dashboard", label: "DASHBOARD", icon: <User size={15} /> }] : []),
-    ...(isAuthenticated && user?.role === "admin" ? [{ href: "/admin/proposals", label: "MANAGE", icon: <ClipboardList size={15} /> }] : []),
+    ...(isAuthenticated && user?.role === "admin" ? [
+      { href: "/admin/proposals", label: "PROPOSALS", icon: <ClipboardList size={15} /> },
+      { href: "/admin/users", label: "ADMINS", icon: <Shield size={15} /> },
+    ] : []),
   ];
 
   const isActive = (href: string) => location === href || (href !== "/" && location.startsWith(href));
@@ -263,7 +267,7 @@ export default function NavBar() {
             )}
 
             {!isAuthenticated && (
-              <a href={getLoginUrl()}>
+              <a href="/login">
                 <button className="btn-game flex items-center gap-1.5 px-4 py-2 text-xs">
                   <LogIn size={14} />
                   SIGN IN

@@ -40,6 +40,20 @@
 - [x] Notify quest creator on submission verified
 - [x] Admin: seed default quests on first run
 
+## Authentication & OAuth
+- [x] **Create custom OAuth endpoint** (start here!)
+  - [x] Build dedicated auth server or module
+  - [x] Add login page UI (/app-auth)
+  - [x] Add register page UI (/app-register)
+  - [x] Implement user session token generation
+  - [x] Implement password hashing (bcrypt)
+  - [x] Add email verification (optional)
+  - [x] Replace mock OAuth with real auth
+- [x] Store/verify hashed passwords in database
+- [x] Add forgot password flow
+- [ ] Add email verification endpoint
+- [ ] Add password reset endpoint
+
 ## Tests
 - [x] XP level calculation tests (calculateLevel, xpForLevel, xpForNextLevel)
 - [x] Auth logout test

@@ -135,7 +135,7 @@ export default function AdminProposals() {
           <Shield size={48} className="mx-auto text-muted-foreground/30 mb-4" />
           <h2 className="text-2xl font-bold mb-2">Sign In Required</h2>
           <p className="text-muted-foreground mb-6">You need to sign in</p>
-          <a href={getLoginUrl()}>
+          <a href="/login">
             <button className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl font-bold text-sm"
               style={{ background: "linear-gradient(135deg, oklch(0.72 0.22 165), oklch(0.65 0.22 240))", color: "oklch(0.08 0.01 260)" }}>
               <LogIn size={14} />

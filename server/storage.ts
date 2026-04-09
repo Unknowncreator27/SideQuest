@@ -1,21 +1,41 @@
-// Preconfigured storage helpers for Manus WebDev templates
-// Uses the Biz-provided storage proxy (Authorization: Bearer <token>)
+import { initializeApp, cert, getApp, getApps, type App } from "firebase-admin/app";
+import { ENV } from "./_core/env";
+import fs from "fs";
+import path from "path";
 
-import { ENV } from './_core/env';
+type StorageConfig =
+  | { type: "forge"; baseUrl: string; apiKey: string }
+  | { type: "firebase"; bucketName: string }
+  | { type: "local"; uploadDir: string };
 
-type StorageConfig = { baseUrl: string; apiKey: string };
+const FIREBASE_BUCKET =
+  process.env.FIREBASE_STORAGE_BUCKET ||
+  process.env.VITE_FIREBASE_STORAGE_BUCKET ||
+  `${process.env.FIREBASE_PROJECT_ID}.firebasestorage.app`;
+
+const LOCAL_UPLOAD_DIR = path.join(process.cwd(), "uploads");
 
 function getStorageConfig(): StorageConfig {
   const baseUrl = ENV.forgeApiUrl;
   const apiKey = ENV.forgeApiKey;
 
-  if (!baseUrl || !apiKey) {
-    throw new Error(
-      "Storage proxy credentials missing: set BUILT_IN_FORGE_API_URL and BUILT_IN_FORGE_API_KEY"
-    );
+  if (baseUrl && apiKey) {
+    return { type: "forge", baseUrl: baseUrl.replace(/\/+$/, ""), apiKey };
   }
 
-  return { baseUrl: baseUrl.replace(/\/+$/, ""), apiKey };
+  if (
+    process.env.FIREBASE_PROJECT_ID &&
+    process.env.FIREBASE_CLIENT_EMAIL &&
+    process.env.FIREBASE_PRIVATE_KEY &&
+    FIREBASE_BUCKET
+  ) {
+    console.log(`[Storage] Using Firebase Storage with bucket: ${FIREBASE_BUCKET}`);
+    return { type: "firebase", bucketName: FIREBASE_BUCKET };
+  }
+
+  // Fallback to local filesystem storage (0 cost)
+  console.log(`[Storage] Using local filesystem storage in: ${LOCAL_UPLOAD_DIR}`);
+  return { type: "local", uploadDir: LOCAL_UPLOAD_DIR };
 }
 
 function buildUploadUrl(baseUrl: string, relKey: string): URL {
@@ -67,36 +87,149 @@ function buildAuthHeaders(apiKey: string): HeadersInit {
   return { Authorization: `Bearer ${apiKey}` };
 }
 
+function getFirebaseApp(): App {
+  if (getApps().length > 0) {
+    return getApp();
+  }
+
+  return initializeApp({
+    credential: cert({
+      projectId: process.env.FIREBASE_PROJECT_ID!,
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL!,
+      privateKey: process.env.FIREBASE_PRIVATE_KEY!.replace(/\\n/g, "\n"),
+    }),
+  });
+}
+
+async function getFirebaseBucket() {
+  const app = getFirebaseApp();
+  const { getStorage } = (await import("firebase-admin/storage")) as any;
+  return getStorage(app).bucket(FIREBASE_BUCKET!);
+}
+
+function ensureUploadDir(dir: string): void {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+}
+
+function getLocalFilePath(uploadDir: string, relKey: string): string {
+  const normalizedKey = relKey.replace(/^\/+/, "").replace(/\/+/g, "/");
+  return path.join(uploadDir, normalizedKey);
+}
+
+function getLocalUrl(relKey: string): string {
+  const normalizedKey = relKey.replace(/^\/+/, "");
+  return `/uploads/${normalizedKey}`;
+}
+
 export async function storagePut(
   relKey: string,
   data: Buffer | Uint8Array | string,
   contentType = "application/octet-stream"
 ): Promise<{ key: string; url: string }> {
-  const { baseUrl, apiKey } = getStorageConfig();
+  const config = getStorageConfig();
   const key = normalizeKey(relKey);
-  const uploadUrl = buildUploadUrl(baseUrl, key);
-  const formData = toFormData(data, contentType, key.split("/").pop() ?? key);
-  const response = await fetch(uploadUrl, {
-    method: "POST",
-    headers: buildAuthHeaders(apiKey),
-    body: formData,
-  });
 
-  if (!response.ok) {
-    const message = await response.text().catch(() => response.statusText);
-    throw new Error(
-      `Storage upload failed (${response.status} ${response.statusText}): ${message}`
-    );
+  if (config.type === "forge") {
+    const uploadUrl = buildUploadUrl(config.baseUrl, key);
+    const formData = toFormData(data, contentType, key.split("/").pop() ?? key);
+    const response = await fetch(uploadUrl, {
+      method: "POST",
+      headers: buildAuthHeaders(config.apiKey),
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const message = await response.text().catch(() => response.statusText);
+      throw new Error(
+        `Storage upload failed (${response.status} ${response.statusText}): ${message}`
+      );
+    }
+
+    const url = (await response.json()).url;
+    return { key, url };
   }
-  const url = (await response.json()).url;
+
+  if (config.type === "firebase") {
+    const bucket = await getFirebaseBucket();
+    const file = bucket.file(key);
+    const buffer = typeof data === "string" ? Buffer.from(data, "utf-8") : Buffer.from(data);
+
+    try {
+      await file.save(buffer, {
+        contentType,
+        resumable: false,
+      });
+
+      const expiresAt = Date.now() + 1000 * 60 * 60; // 1 hour
+      const [url] = await file.getSignedUrl({
+        action: "read",
+        expires: new Date(expiresAt),
+      });
+
+      return { key, url };
+    } catch (error: any) {
+      if (error.message?.includes("does not exist")) {
+        throw new Error(
+          `Firebase Storage bucket "${FIREBASE_BUCKET}" does not exist. Please enable Firebase Storage in your Firebase Console for project "${process.env.FIREBASE_PROJECT_ID}" and ensure the bucket exists.`
+        );
+      }
+      throw error;
+    }
+  }
+
+  // Local filesystem storage
+  ensureUploadDir(config.uploadDir);
+  const filePath = getLocalFilePath(config.uploadDir, key);
+  const dir = path.dirname(filePath);
+  ensureUploadDir(dir);
+
+  const buffer = typeof data === "string" ? Buffer.from(data, "utf-8") : Buffer.from(data);
+  fs.writeFileSync(filePath, buffer);
+
+  const url = getLocalUrl(key);
   return { key, url };
 }
 
-export async function storageGet(relKey: string): Promise<{ key: string; url: string; }> {
-  const { baseUrl, apiKey } = getStorageConfig();
+export async function storageGet(relKey: string): Promise<{ key: string; url: string }> {
+  const config = getStorageConfig();
   const key = normalizeKey(relKey);
-  return {
-    key,
-    url: await buildDownloadUrl(baseUrl, key, apiKey),
-  };
+
+  if (config.type === "forge") {
+    return {
+      key,
+      url: await buildDownloadUrl(config.baseUrl, key, config.apiKey),
+    };
+  }
+
+  if (config.type === "firebase") {
+    const bucket = await getFirebaseBucket();
+    const file = bucket.file(key);
+    const expiresAt = Date.now() + 1000 * 60 * 60; // 1 hour
+    try {
+      const [url] = await file.getSignedUrl({
+        action: "read",
+        expires: new Date(expiresAt),
+      });
+
+      return { key, url };
+    } catch (error: any) {
+      if (error.message?.includes("does not exist")) {
+        throw new Error(
+          `Firebase Storage bucket "${FIREBASE_BUCKET}" does not exist. Please enable Firebase Storage in your Firebase Console for project "${process.env.FIREBASE_PROJECT_ID}" and ensure the bucket exists.`
+        );
+      }
+      throw error;
+    }
+  }
+
+  // Local filesystem storage
+  const filePath = getLocalFilePath(config.uploadDir, key);
+  if (!fs.existsSync(filePath)) {
+    throw new Error(`File not found: ${key}`);
+  }
+
+  const url = getLocalUrl(key);
+  return { key, url };
 }

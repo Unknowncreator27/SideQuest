@@ -260,15 +260,23 @@ class SDKServer {
     // Regular authentication flow
     const cookies = this.parseCookies(req.headers.cookie);
     const sessionCookie = cookies.get(COOKIE_NAME);
+    
+    if (!sessionCookie) {
+      console.log("[Auth] No session cookie found in request");
+      throw ForbiddenError("Invalid session cookie");
+    }
+
     const session = await this.verifySession(sessionCookie);
 
     if (!session) {
+      console.log("[Auth] Session verification failed");
       throw ForbiddenError("Invalid session cookie");
     }
 
     const sessionUserId = session.openId;
     const signedInAt = new Date();
     let user = await db.getUserByOpenId(sessionUserId);
+    console.log("[Auth] Session verified for user:", sessionUserId, "found in db:", !!user);
 
     // If user not in DB, sync from OAuth server automatically
     if (!user) {

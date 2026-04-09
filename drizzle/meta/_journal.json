@@ -43,6 +43,13 @@
       "when": 1775426481204,
       "tag": "0005_curvy_iron_lad",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1775734055409,
+      "tag": "0006_eager_tyger_tiger",
+      "breakpoints": true
     }
   ]
 }
