@@ -1,0 +1,48 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1775045831914,
+      "tag": "0000_fuzzy_leader",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1775046157421,
+      "tag": "0001_sturdy_wolfsbane",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1775047438553,
+      "tag": "0002_lovely_stryfe",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1775050066904,
+      "tag": "0003_known_fabian_cortez",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1775253981862,
+      "tag": "0004_burly_juggernaut",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1775426481204,
+      "tag": "0005_curvy_iron_lad",
+      "breakpoints": true
+    }
+  ]
+}

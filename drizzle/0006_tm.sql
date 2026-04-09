@@ -1,0 +1,23 @@
+CREATE TABLE team_members (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    userId INT NOT NULL,
+    friendId INT NOT NULL,
+    status ENUM('pending', 'accepted', 'blocked') DEFAULT 'pending' NOT NULL,
+    createdAt TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP(3) NOT NULL,
+    updatedAt TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) NOT NULL,
+    FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (friendId) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE quest_team_invitations (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  questProposalId INT NOT NULL,
+  invitedUserId INT NOT NULL,
+  invitedBy INT NOT NULL,
+  status ENUM('pending', 'accepted', 'declined') DEFAULT 'pending' NOT NULL,
+  createdAt TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP(3) NOT NULL,
+  updatedAt TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) NOT NULL,
+  FOREIGN KEY (questProposalId) REFERENCES questProposals(id) ON DELETE CASCADE,
+  FOREIGN KEY (invitedUserId) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (invitedBy) REFERENCES users(id) ON DELETE CASCADE
+);

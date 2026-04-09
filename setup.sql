@@ -1,0 +1,4 @@
+CREATE DATABASE IF NOT EXISTS SideQuest;  
+CREATE USER IF NOT EXISTS 'Hanro'@'localhost' IDENTIFIED BY 'Killswitch@21';  
+GRANT ALL PRIVILEGES ON SideQuest.* TO 'Hanro'@'localhost';  
+FLUSH PRIVILEGES;  
