@@ -9,6 +9,10 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [forgotPasswordEmail, setForgotPasswordEmail] = useState("");
+  const [forgotPasswordLoading, setForgotPasswordLoading] = useState(false);
+  const [forgotPasswordMessage, setForgotPasswordMessage] = useState("");
 
   const [formData, setFormData] = useState({
     email: "",
@@ -86,7 +90,7 @@ export default function Login() {
         throw new Error(data.error || "Authentication failed");
       }
 
-      setSuccess(isRegister ? "Account created! Redirecting..." : "Welcome back! Redirecting...");
+      setSuccess(isRegister ? "Account created! Please check your email for verification." : "Welcome back! Redirecting...");
       setTimeout(() => {
         window.location.href = "/";
       }, 1500);
@@ -94,6 +98,31 @@ export default function Login() {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setForgotPasswordLoading(true);
+    setForgotPasswordMessage("");
+
+    try {
+      const response = await fetch("/api/auth/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: forgotPasswordEmail }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || "Failed to send reset email");
+      }
+
+      setForgotPasswordMessage("Password reset email sent! Check your inbox.");
+    } catch (err) {
+      setForgotPasswordMessage(err instanceof Error ? err.message : "Something went wrong");
+    } finally {
+      setForgotPasswordLoading(false);
     }
   };
 
@@ -304,6 +333,20 @@ export default function Login() {
               </div>
             </div>
 
+            {/* Forgot Password Link (Login only) */}
+            {!isRegister && (
+              <div className="text-right">
+                <button
+                  type="button"
+                  onClick={() => setShowForgotPassword(true)}
+                  className="text-sm hover:opacity-80 transition"
+                  style={{ color: "oklch(0.72 0.22 165)" }}
+                >
+                  Forgot password?
+                </button>
+              </div>
+            )}
+
             {/* Submit Button */}
             <button
               type="submit"
@@ -345,6 +388,84 @@ export default function Login() {
             </button>
           </Link>
         </div>
+
+        {/* Forgot Password Modal */}
+        {showForgotPassword && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div
+              className="w-full max-w-md mx-4 rounded-2xl p-8 backdrop-blur-sm border-2"
+              style={{
+                background: "rgba(255, 255, 255, 0.05)",
+                borderColor: "oklch(0.72 0.22 165 / 0.3)",
+              }}
+            >
+              <h2 className="text-xl font-bold mb-2 text-center">Reset Password</h2>
+              <p className="text-sm text-center mb-6 text-gray-400">
+                Enter your email address and we'll send you a link to reset your password.
+              </p>
+
+              {forgotPasswordMessage && (
+                <div
+                  className="mb-4 p-3 rounded-lg text-sm"
+                  style={{
+                    background: forgotPasswordMessage.includes("sent") ? "rgba(34, 197, 94, 0.1)" : "rgba(239, 68, 68, 0.1)",
+                    color: forgotPasswordMessage.includes("sent") ? "rgb(134, 239, 172)" : "rgb(248, 113, 113)",
+                    border: forgotPasswordMessage.includes("sent") ? "1px solid rgba(34, 197, 94, 0.3)" : "1px solid rgba(239, 68, 68, 0.3)",
+                  }}
+                >
+                  {forgotPasswordMessage}
+                </div>
+              )}
+
+              <form onSubmit={handleForgotPassword} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium mb-2">Email</label>
+                  <input
+                    type="email"
+                    value={forgotPasswordEmail}
+                    onChange={(e) => setForgotPasswordEmail(e.target.value)}
+                    placeholder="you@example.com"
+                    required
+                    className="w-full px-4 py-2 rounded-lg bg-black/30 border-2 text-white placeholder-gray-500 focus:outline-none transition"
+                    style={{
+                      borderColor: "oklch(0.72 0.22 165 / 0.3)",
+                    }}
+                    onFocus={(e) => {
+                      e.currentTarget.style.borderColor = "oklch(0.72 0.22 165 / 0.8)";
+                    }}
+                    onBlur={(e) => {
+                      e.currentTarget.style.borderColor = "oklch(0.72 0.22 165 / 0.3)";
+                    }}
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={forgotPasswordLoading}
+                  className="w-full py-3 rounded-lg font-bold text-sm tracking-wider flex items-center justify-center gap-2 transition-all duration-200 disabled:opacity-50"
+                  style={{
+                    background: "linear-gradient(135deg, oklch(0.72 0.22 165), oklch(0.65 0.22 240))",
+                    color: "oklch(0.08 0.01 260)",
+                    boxShadow: "0 0 20px oklch(0.72 0.22 165 / 0.4)",
+                  }}
+                >
+                  {forgotPasswordLoading ? "Sending..." : "Send Reset Link"}
+                </button>
+              </form>
+
+              <button
+                onClick={() => {
+                  setShowForgotPassword(false);
+                  setForgotPasswordEmail("");
+                  setForgotPasswordMessage("");
+                }}
+                className="w-full mt-4 py-2 rounded-lg text-sm text-gray-400 hover:text-gray-200 border-2 border-gray-600 hover:border-gray-500 transition"
+              >
+                Back to Login
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Footer */}
         <p className="text-center text-xs text-gray-500 mt-6">

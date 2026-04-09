@@ -7,6 +7,7 @@ import * as bcrypt from "bcrypt";
 import { z } from "zod";
 import { getAuth } from "firebase-admin/auth";
 import { initializeApp, cert } from "firebase-admin/app";
+import crypto from "crypto";
 
 // Initialize Firebase Admin
 let firebaseAdminApp: any = null;
@@ -48,6 +49,38 @@ const googleSignInSchema = z.object({
   }),
 });
 
+const forgotPasswordSchema = z.object({
+  email: z.string().email("Invalid email"),
+});
+
+const resetPasswordSchema = z.object({
+  token: z.string(),
+  password: z.string().min(6, "Password must be at least 6 characters"),
+});
+
+const verifyEmailSchema = z.object({
+  token: z.string(),
+});
+
+// Email sending utilities (replace with actual email service)
+async function sendVerificationEmail(email: string, token: string): Promise<void> {
+  const verificationUrl = `${process.env.VITE_APP_URL || 'http://localhost:3007'}/verify-email?token=${token}`;
+  console.log(`[Email] Verification email to ${email}:`);
+  console.log(`Click here to verify: ${verificationUrl}`);
+  // TODO: Replace with actual email service (SendGrid, AWS SES, etc.)
+}
+
+async function sendPasswordResetEmail(email: string, token: string): Promise<void> {
+  const resetUrl = `${process.env.VITE_APP_URL || 'http://localhost:3007'}/reset-password?token=${token}`;
+  console.log(`[Email] Password reset email to ${email}:`);
+  console.log(`Click here to reset password: ${resetUrl}`);
+  // TODO: Replace with actual email service (SendGrid, AWS SES, etc.)
+}
+
+function generateSecureToken(): string {
+  return crypto.randomBytes(32).toString('hex');
+}
+
 export function registerAuthRoutes(app: Express) {
   // Register endpoint
   app.post("/api/auth/register", async (req: Request, res: Response) => {
@@ -61,26 +94,31 @@ export function registerAuthRoutes(app: Express) {
         return res.status(400).json({ error: "User with this email already exists" });
       }
 
-      // Create new user
+      // Generate email verification token
+      const verificationToken = generateSecureToken();
+      const verificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+
+      // Create new user (unverified)
       const openId = `email:${data.email}`;
       await db.upsertUser({
         openId,
         name: data.name || data.email.split("@")[0],
         email: data.email,
-        password: hashedPassword, // Store hashed password
+        password: hashedPassword,
         loginMethod: "email-password",
+        emailVerified: false,
+        emailVerificationToken: verificationToken,
+        emailVerificationExpires: verificationExpires,
         lastSignedIn: new Date(),
       });
 
-      const sessionToken = await sdk.createSessionToken(openId, {
-        name: data.name || data.email.split("@")[0],
-        expiresInMs: ONE_YEAR_MS,
+      // Send verification email
+      await sendVerificationEmail(data.email, verificationToken);
+
+      res.json({
+        success: true,
+        message: "Account created successfully. Please check your email to verify your account."
       });
-
-      const cookieOptions = getSessionCookieOptions(req);
-      res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
-
-      res.json({ success: true, message: "Account created and logged in successfully" });
     } catch (error) {
       if (error instanceof z.ZodError) {
         res.status(400).json({ error: error.issues[0].message });
@@ -100,6 +138,14 @@ export function registerAuthRoutes(app: Express) {
 
       if (!existingUser || !existingUser.password) {
         return res.status(400).json({ error: "Invalid email or password" });
+      }
+
+      // Check if email is verified
+      if (!existingUser.emailVerified) {
+        return res.status(400).json({
+          error: "Please verify your email before logging in. Check your email for the verification link.",
+          requiresVerification: true
+        });
       }
 
       const validPassword = await bcrypt.compare(data.password, existingUser.password);
@@ -179,6 +225,145 @@ export function registerAuthRoutes(app: Express) {
   app.post("/api/auth/logout", (req: Request, res: Response) => {
     res.clearCookie(COOKIE_NAME);
     res.json({ success: true, message: "Logged out" });
+  });
+
+  // Email verification endpoint
+  app.post("/api/auth/verify-email", async (req: Request, res: Response) => {
+    try {
+      const data = verifyEmailSchema.parse(req.body);
+
+      const user = await db.getUserByEmailVerificationToken(data.token);
+      if (!user) {
+        return res.status(400).json({ error: "Invalid or expired verification token" });
+      }
+
+      if (!user.emailVerificationExpires || user.emailVerificationExpires < new Date()) {
+        return res.status(400).json({ error: "Verification token has expired" });
+      }
+
+      // Mark email as verified and clear verification data
+      await db.updateUser(user.id, {
+        emailVerified: true,
+        emailVerificationToken: null,
+        emailVerificationExpires: null,
+      });
+
+      res.json({ success: true, message: "Email verified successfully. You can now log in." });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ error: error.issues[0].message });
+      } else {
+        console.error("[Auth] Email verification failed", error);
+        res.status(500).json({ error: "Email verification failed" });
+      }
+    }
+  });
+
+  // Resend verification email endpoint
+  app.post("/api/auth/resend-verification", async (req: Request, res: Response) => {
+    try {
+      const data = z.object({ email: z.string().email() }).parse(req.body);
+
+      const user = await db.getUserByOpenId(`email:${data.email}`);
+      if (!user) {
+        return res.status(400).json({ error: "User not found" });
+      }
+
+      if (user.emailVerified) {
+        return res.status(400).json({ error: "Email is already verified" });
+      }
+
+      // Generate new verification token
+      const verificationToken = generateSecureToken();
+      const verificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+
+      await db.updateUser(user.id, {
+        emailVerificationToken: verificationToken,
+        emailVerificationExpires: verificationExpires,
+      });
+
+      await sendVerificationEmail(data.email, verificationToken);
+
+      res.json({ success: true, message: "Verification email sent. Please check your email." });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ error: error.issues[0].message });
+      } else {
+        console.error("[Auth] Resend verification failed", error);
+        res.status(500).json({ error: "Failed to resend verification email" });
+      }
+    }
+  });
+
+  // Forgot password endpoint
+  app.post("/api/auth/forgot-password", async (req: Request, res: Response) => {
+    try {
+      const data = forgotPasswordSchema.parse(req.body);
+
+      const user = await db.getUserByOpenId(`email:${data.email}`);
+      if (!user) {
+        // Don't reveal if email exists or not for security
+        return res.json({ success: true, message: "If an account with this email exists, a password reset link has been sent." });
+      }
+
+      if (!user.password) {
+        // User signed up with OAuth, not email/password
+        return res.json({ success: true, message: "If an account with this email exists, a password reset link has been sent." });
+      }
+
+      // Generate password reset token
+      const resetToken = generateSecureToken();
+      const resetExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+      await db.updateUser(user.id, {
+        passwordResetToken: resetToken,
+        passwordResetExpires: resetExpires,
+      });
+
+      await sendPasswordResetEmail(data.email, resetToken);
+
+      res.json({ success: true, message: "If an account with this email exists, a password reset link has been sent." });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ error: error.issues[0].message });
+      } else {
+        console.error("[Auth] Forgot password failed", error);
+        res.status(500).json({ error: "Failed to process password reset request" });
+      }
+    }
+  });
+
+  // Reset password endpoint
+  app.post("/api/auth/reset-password", async (req: Request, res: Response) => {
+    try {
+      const data = resetPasswordSchema.parse(req.body);
+
+      const user = await db.getUserByPasswordResetToken(data.token);
+      if (!user) {
+        return res.status(400).json({ error: "Invalid or expired reset token" });
+      }
+
+      if (!user.passwordResetExpires || user.passwordResetExpires < new Date()) {
+        return res.status(400).json({ error: "Reset token has expired" });
+      }
+
+      // Hash new password and clear reset data
+      const hashedPassword = await bcrypt.hash(data.password, 10);
+      await db.updateUser(user.id, {
+        password: hashedPassword,
+        passwordResetToken: null,
+        passwordResetExpires: null,
+      });
+
+      res.json({ success: true, message: "Password reset successfully. You can now log in with your new password." });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ error: error.issues[0].message });
+      } else {
+        console.error("[Auth] Reset password failed", error);
+        res.status(500).json({ error: "Failed to reset password" });
+      }
+    }
   });
 
   // Mock OAuth (for development)

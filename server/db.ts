@@ -181,6 +181,46 @@ export async function getLeaderboard(limit = 20) {
     .limit(limit);
 }
 
+export async function updateUser(id: number, updates: Partial<InsertUser>): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+
+  await db.update(users).set({ ...updates, updatedAt: new Date() }).where(eq(users.id, id));
+  return true;
+}
+
+export async function getUserByEmailVerificationToken(token: string) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const result = await db
+    .select()
+    .from(users)
+    .where(and(
+      eq(users.emailVerificationToken, token),
+      gt(users.emailVerificationExpires, new Date())
+    ))
+    .limit(1);
+
+  return result[0] || null;
+}
+
+export async function getUserByPasswordResetToken(token: string) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const result = await db
+    .select()
+    .from(users)
+    .where(and(
+      eq(users.passwordResetToken, token),
+      gt(users.passwordResetExpires, new Date())
+    ))
+    .limit(1);
+
+  return result[0] || null;
+}
+
 // ─── Quests ──────────────────────────────────────────────────────────────────
 
 export async function createQuest(quest: InsertQuest): Promise<number> {

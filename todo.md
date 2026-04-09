@@ -41,6 +41,7 @@
 - [x] Admin: seed default quests on first run
 
 ## Authentication & OAuth
+
 - [x] **Create custom OAuth endpoint** (start here!)
   - [x] Build dedicated auth server or module
   - [x] Add login page UI (/app-auth)
@@ -51,8 +52,8 @@
   - [x] Replace mock OAuth with real auth
 - [x] Store/verify hashed passwords in database
 - [x] Add forgot password flow
-- [ ] Add email verification endpoint
-- [ ] Add password reset endpoint
+- [x] Add email verification endpoint
+- [x] Add password reset endpoint
 
 ## Tests
 - [x] XP level calculation tests (calculateLevel, xpForLevel, xpForNextLevel)

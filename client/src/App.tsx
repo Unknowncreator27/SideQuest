@@ -13,11 +13,13 @@ import CreateQuest from "./pages/CreateQuest";
 import AdminProposals from "./pages/AdminProposals";
 import AdminUsers from "./pages/AdminUsers";
 import Login from "./pages/Login";
+import VerifyEmail from "./pages/VerifyEmail";
+import ResetPassword from "./pages/ResetPassword";
 import NavBar from "./components/NavBar";
 
 function Router() {
   const [location] = useLocation();
-  const hideNavBar = ["/login"].includes(location);
+  const hideNavBar = ["/login", "/verify-email", "/reset-password"].includes(location);
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -25,6 +27,8 @@ function Router() {
       <Switch>
         <Route path="/" component={Home} />
         <Route path="/login" component={Login} />
+        <Route path="/verify-email" component={VerifyEmail} />
+        <Route path="/reset-password" component={ResetPassword} />
         <Route path="/quests" component={QuestFeed} />
         <Route path="/quests/:id" component={QuestDetail} />
         <Route path="/dashboard" component={Dashboard} />

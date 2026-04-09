@@ -46,8 +46,9 @@ import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
 import { eq } from "drizzle-orm";
-import { questProposals } from "../drizzle/schema";
+import { questProposals, users } from "../drizzle/schema";
 import { ENV } from "./_core/env";
+import bcrypt from "bcrypt";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -792,6 +793,80 @@ export const appRouter = router({
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
       return { success: true } as const;
     }),
+    verifyEmail: publicProcedure
+      .input(z.object({ token: z.string() }))
+      .mutation(async ({ input }) => {
+        const db = await getDb();
+        if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+        // Find user by verification token
+        const allUsers = await db.select().from(users);
+        const user = allUsers.find((u: any) => u.emailVerificationToken === input.token);
+
+        if (!user) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Invalid verification token",
+          });
+        }
+
+        if (user.emailVerified) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Email already verified",
+          });
+        }
+
+        // Update user to mark email as verified
+        await db
+          .update(users)
+          .set({
+            emailVerified: true,
+            emailVerificationToken: null,
+          })
+          .where(eq(users.id, user.id));
+
+        return { success: true };
+      }),
+    resetPassword: publicProcedure
+      .input(z.object({ token: z.string(), newPassword: z.string().min(8) }))
+      .mutation(async ({ input }) => {
+        const db = await getDb();
+        if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+        // Find user by reset token
+        const allUsers = await db.select().from(users);
+        const user = allUsers.find((u: any) => u.passwordResetToken === input.token);
+
+        if (!user) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Invalid reset token",
+          });
+        }
+
+        // Check if token is expired (1 hour)
+        const now = new Date();
+        if (user.passwordResetExpires && now > user.passwordResetExpires) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Reset token has expired",
+          });
+        }
+
+        // Hash new password and update user
+        const hashedPassword = await bcrypt.hash(input.newPassword, 10);
+        await db
+          .update(users)
+          .set({
+            password: hashedPassword,
+            passwordResetToken: null,
+            passwordResetExpires: null,
+          })
+          .where(eq(users.id, user.id));
+
+        return { success: true };
+      }),
   }),
   quest: questRouter,
   submission: submissionRouter,
