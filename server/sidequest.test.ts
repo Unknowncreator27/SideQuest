@@ -12,21 +12,27 @@ function makeCtx(overrides: Partial<TrpcContext> = {}): TrpcContext {
       openId: "test-user",
       name: "Test User",
       email: "test@example.com",
+      password: null,
       loginMethod: "manus",
       role: "user",
       xp: 0,
       level: 1,
       avatarUrl: null,
+      emailVerified: false,
+      emailVerificationToken: null,
+      emailVerificationExpires: null,
+      passwordResetToken: null,
+      passwordResetExpires: null,
       createdAt: new Date(),
       updatedAt: new Date(),
       lastSignedIn: new Date(),
     },
-    req: { protocol: "https", headers: {} } as TrpcContext["req"],
+    req: { protocol: "https", headers: {} },
     res: {
       clearCookie: () => {},
-    } as TrpcContext["res"],
+    },
     ...overrides,
-  };
+  } as unknown as TrpcContext;
 }
 
 // ─── XP / Level Calculation Tests ─────────────────────────────────────────────
@@ -92,7 +98,7 @@ describe("auth.logout", () => {
     const ctx = makeCtx({
       res: {
         clearCookie: (name: string) => clearedCookies.push(name),
-      } as TrpcContext["res"],
+      } as unknown as TrpcContext["res"],
     });
     const caller = appRouter.createCaller(ctx);
     const result = await caller.auth.logout();

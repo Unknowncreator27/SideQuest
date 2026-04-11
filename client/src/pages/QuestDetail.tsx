@@ -54,7 +54,8 @@ type VerifyResult = {
 export default function QuestDetail() {
   const params = useParams<{ id: string }>();
   const questId = parseInt(params.id ?? "0");
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user: authUser } = useAuth();
+  const isAdmin = authUser?.role === "admin";
   const [, navigate] = useLocation();
 
   const { data: questRow, isLoading } = trpc.quest.get.useQuery(
@@ -67,7 +68,16 @@ export default function QuestDetail() {
 
   const uploadMedia = trpc.submission.uploadMedia.useMutation();
   const verifySubmission = trpc.submission.verify.useMutation();
+  const deleteQuestMutation = trpc.quest.delete.useMutation();
   const utils = trpc.useUtils();
+
+  const handleDeleteQuest = async () => {
+    if (!questRow) return;
+    if (!confirm("Delete this quest permanently?")) return;
+    await deleteQuestMutation.mutateAsync({ id: questId });
+    await utils.quest.list.invalidate();
+    navigate("/quests");
+  };
 
   const [files, setFiles] = useState<File[]>([]);
   const [previews, setPreviews] = useState<string[]>([]);
@@ -214,7 +224,7 @@ export default function QuestDetail() {
 
   const quest = questRow.quest;
   const creator = questRow.creator;
-  const isExpired = quest.status === "expired";
+  const isExpired = quest.status === "expired" && !alreadyCompleted;
 
   return (
     <div className="min-h-screen py-8">
@@ -243,11 +253,23 @@ export default function QuestDetail() {
                 </span>
               )}
             </div>
-            <div
-              className="text-2xl font-black"
-              style={{ fontFamily: "Orbitron, monospace", color: "oklch(0.72 0.22 165)" }}
-            >
-              +{quest.xpReward} XP
+            <div className="flex items-center gap-3">
+              {isAdmin && (
+                <button
+                  type="button"
+                  onClick={handleDeleteQuest}
+                  disabled={deleteQuestMutation.isLoading}
+                  className="text-sm text-destructive font-semibold px-3 py-2 rounded-lg border border-destructive/20 hover:bg-destructive/10 transition"
+                >
+                  {deleteQuestMutation.isLoading ? "Deleting..." : "Delete Quest"}
+                </button>
+              )}
+              <div
+                className="text-2xl font-black"
+                style={{ fontFamily: "Orbitron, monospace", color: "oklch(0.72 0.22 165)" }}
+              >
+                +{quest.xpReward} XP
+              </div>
             </div>
           </div>
 
@@ -284,7 +306,7 @@ export default function QuestDetail() {
             <span className="flex items-center gap-1.5">
               <Trophy size={13} /> {quest.completionCount} completions
             </span>
-            {quest.expiresAt && <QuestCountdown expiresAt={quest.expiresAt} />}
+            {quest.expiresAt && !alreadyCompleted && <QuestCountdown expiresAt={quest.expiresAt} />}
           </div>
         </motion.div>
 

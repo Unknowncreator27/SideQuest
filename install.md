@@ -36,6 +36,7 @@ A gamified real-world quest platform where users complete challenges, earn XP, l
 # commnd: pnpm install
 
 ### 3. running the project has 2 steps
+
 # 1. ctrl + Shift + B - build the project
 # 2.  command (in cmd): node dist/index.js
 #. click on the link povided (should be localhost:...)

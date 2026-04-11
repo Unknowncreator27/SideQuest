@@ -56,6 +56,27 @@ function randomSuffix() {
   return Math.random().toString(36).substring(2, 10);
 }
 
+function getProposalDurationMs(duration?: string | null, createdAt?: Date | string, expiresAt?: Date | string) {
+  if (duration && duration !== "none") {
+    switch (duration) {
+      case "1h": return 60 * 60 * 1000;
+      case "6h": return 6 * 60 * 60 * 1000;
+      case "24h": return 24 * 60 * 60 * 1000;
+      case "7d": return 7 * 24 * 60 * 60 * 1000;
+      case "30d": return 30 * 24 * 60 * 60 * 1000;
+    }
+  }
+
+  if (createdAt && expiresAt) {
+    const start = new Date(createdAt).getTime();
+    const end = new Date(expiresAt).getTime();
+    const diff = end - start;
+    return diff > 0 ? diff : undefined;
+  }
+
+  return undefined;
+}
+
 // ─── Routers ─────────────────────────────────────────────────────────────────
 
 const questRouter = router({
@@ -134,7 +155,7 @@ const questRouter = router({
     .mutation(async ({ ctx, input }) => {
       const row = await getQuestById(input.id);
       if (!row) throw new TRPCError({ code: "NOT_FOUND" });
-      if (row.quest.createdBy !== ctx.user.id && ctx.user.role !== "admin") {
+      if (ctx.user.role !== "admin") {
         throw new TRPCError({ code: "FORBIDDEN" });
       }
       await deleteQuest(input.id);
@@ -519,36 +540,43 @@ const teamRouter = router({
 });
 
 const proposalRouter = router({
-  submit: protectedProcedure
-    .input(
-      z.object({
-        title: z.string().min(3).max(255),
-        description: z.string().min(10),
-        xpReward: z.number().min(10).max(5000),
-        difficulty: z.enum(["easy", "medium", "hard", "legendary"]),
-      })
-    )
-    .mutation(async ({ ctx, input }) => {
-      const proposalId = await createQuestProposal({
-        title: input.title,
-        description: input.description,
-        xpReward: input.xpReward,
-        difficulty: input.difficulty,
-        proposedBy: ctx.user.id,
-        status: "pending",
-      });
+  // Inside proposalRouter
+submit: protectedProcedure
+  .input(
+    z.object({
+      title: z.string().min(3).max(255),
+      description: z.string().min(10),
+      xpReward: z.number().min(10).max(5000),
+      difficulty: z.enum(["easy", "medium", "hard", "legendary"]),
+      duration: z.enum(["none", "1h", "6h", "24h", "7d", "30d"]).default("24h"),
+      requirementType: z.enum(["individual", "team"]).default("individual"), // optional
+      requiredMediaCount: z.number().min(1).max(5).default(1),               // optional
+    })
+  )
+  .mutation(async ({ ctx, input }) => {
+    const proposalId = await createQuestProposal({
+      title: input.title,
+      description: input.description,
+      xpReward: input.xpReward,
+      difficulty: input.difficulty,
+      proposedBy: ctx.user.id,
+      status: "pending",
+      duration: input.duration,
+      requirementType: input.requirementType,     // optional
+      requiredMediaCount: input.requiredMediaCount, // optional
+    });
 
-      const user = await getUserById(ctx.user.id);
-      await createNotification({
-        userId: 1,
-        type: "milestone",
-        title: "New Quest Proposal",
-        message: `${user?.name || "A user"} proposed: "${input.title}" (${input.difficulty}, ${input.xpReward} XP)`,
-        metadata: JSON.stringify({ proposalId, proposedBy: ctx.user.id }),
-      });
+    const user = await getUserById(ctx.user.id);
+    await createNotification({
+      userId: 1, // owner
+      type: "milestone",
+      title: "New Quest Proposal",
+      message: `${user?.name || "A user"} proposed: "${input.title}" (${input.difficulty}, ${input.xpReward} XP)`,
+      metadata: JSON.stringify({ proposalId, proposedBy: ctx.user.id }),
+    });
 
-      return { proposalId, success: true };
-    }),
+    return { proposalId, success: true };
+  }),
 
   myProposals: protectedProcedure.query(async ({ ctx }) => {
     return getQuestProposalsByUser(ctx.user.id);
@@ -582,6 +610,9 @@ const proposalRouter = router({
         throw new TRPCError({ code: "BAD_REQUEST", message: "Proposal is not pending" });
       }
 
+      const durationMs = getProposalDurationMs(proposal[0].duration, proposal[0].createdAt, proposal[0].expiresAt);
+      const questExpiresAt = durationMs ? new Date(Date.now() + durationMs) : undefined;
+
       const questId = await createQuest({
         title: proposal[0].title,
         description: proposal[0].description,
@@ -589,6 +620,9 @@ const proposalRouter = router({
         difficulty: proposal[0].difficulty,
         createdBy: proposal[0].proposedBy,
         status: "active",
+        expiresAt: questExpiresAt,
+        requirementType: proposal[0].requirementType,
+        requiredMediaCount: proposal[0].requiredMediaCount,
       });
 
       await updateQuestProposal(input.proposalId, { status: "approved" });
@@ -666,6 +700,9 @@ const proposalRouter = router({
 
         if (!proposal[0] || proposal[0].status !== "pending") continue;
 
+        const durationMs = getProposalDurationMs(proposal[0].duration, proposal[0].createdAt, proposal[0].expiresAt);
+        const questExpiresAt = durationMs ? new Date(Date.now() + durationMs) : undefined;
+
         const questId = await createQuest({
           title: proposal[0].title,
           description: proposal[0].description,
@@ -673,6 +710,9 @@ const proposalRouter = router({
           difficulty: proposal[0].difficulty,
           createdBy: proposal[0].proposedBy,
           status: "active",
+          expiresAt: questExpiresAt,
+          requirementType: proposal[0].requirementType,
+          requiredMediaCount: proposal[0].requiredMediaCount,
         });
 
         await updateQuestProposal(proposalId, { status: "approved" });

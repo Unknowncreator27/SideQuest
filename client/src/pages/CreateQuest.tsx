@@ -49,13 +49,15 @@ export default function CreateQuest() {
   const { isAuthenticated } = useAuth();
   const [, navigate] = useLocation();
 
+  type DurationOption = "none" | "1h" | "6h" | "24h" | "7d" | "30d";
+
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [xpReward, setXpReward] = useState(100);
   const [difficulty, setDifficulty] = useState<Difficulty>("medium");
   const [requirementType, setRequirementType] = useState<"individual" | "team">("individual");
   const [requiredMediaCount, setRequiredMediaCount] = useState(1);
-  const [duration, setDuration] = useState<string | null>(null);
+  const [duration, setDuration] = useState<DurationOption>("24h");
   const [submitting, setSubmitting] = useState(false);
   const [teamMembers, setTeamMembers] = useState<Array<{ id: number; name: string | null; avatarUrl: string | null; level: number; xp: number }>>([]);
   const [searchQuery, setSearchQuery] = useState("");
@@ -63,12 +65,13 @@ export default function CreateQuest() {
   const [showSearchDropdown, setShowSearchDropdown] = useState(false);
 
   const DURATION_OPTIONS = [
+    { value: "none", label: "None" },
     { value: "1h", label: "1 Hour" },
     { value: "6h", label: "6 Hours" },
     { value: "24h", label: "24 Hours" },
     { value: "7d", label: "7 Days" },
     { value: "30d", label: "30 Days" },
-  ];
+  ] as const;
 
   const submitProposal = trpc.proposal.submit.useMutation();
   const inviteTeamMember = trpc.team.inviteTeamMember.useMutation();
@@ -88,6 +91,26 @@ export default function CreateQuest() {
     }
   }, [searchUsers.data, teamMembers]);
 
+  // ==================== NEW: Duration → expiresAt Calculation ====================
+  const calculateExpiresAt = (dur: DurationOption): string | undefined => {
+    if (dur === "none") return undefined;
+    const now = new Date();
+    let milliseconds = 0;
+
+    switch (dur) {
+      case "1h":  milliseconds = 1 * 60 * 60 * 1000; break;
+      case "6h":  milliseconds = 6 * 60 * 60 * 1000; break;
+      case "24h": milliseconds = 24 * 60 * 60 * 1000; break;
+      case "7d":  milliseconds = 7 * 24 * 60 * 60 * 1000; break;
+      case "30d": milliseconds = 30 * 24 * 60 * 60 * 1000; break;
+      default:    milliseconds = 24 * 60 * 60 * 1000; // fallback
+    }
+
+    const expiresAt = new Date(now.getTime() + milliseconds);
+    return expiresAt.toISOString();
+  };
+  // =============================================================================
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim() || !description.trim()) {
@@ -98,13 +121,17 @@ export default function CreateQuest() {
       toast.error("Please add at least one team member");
       return;
     }
+
     setSubmitting(true);
     try {
+      const expiresAt = calculateExpiresAt(duration);
+
       const result = await submitProposal.mutateAsync({
         title: title.trim(),
         description: description.trim(),
         xpReward,
         difficulty,
+        duration: duration === "none" ? undefined : duration,
       });
 
       // Invite team members if it's a team quest
@@ -191,7 +218,7 @@ export default function CreateQuest() {
           </div>
 
           <form onSubmit={handleSubmit} className="flex flex-col gap-5">
-            {/* Title */}
+            {/* Title - unchanged */}
             <div className="game-card p-5">
               <label className="block text-xs font-bold tracking-widest text-muted-foreground mb-2">
                 QUEST TITLE *
@@ -207,7 +234,7 @@ export default function CreateQuest() {
               <div className="text-xs text-muted-foreground mt-1 text-right">{title.length}/255</div>
             </div>
 
-            {/* Description */}
+            {/* Description - unchanged */}
             <div className="game-card p-5">
               <label className="block text-xs font-bold tracking-widest text-muted-foreground mb-2">
                 DESCRIPTION *
@@ -221,7 +248,7 @@ export default function CreateQuest() {
               />
             </div>
 
-            {/* Difficulty */}
+            {/* Difficulty - unchanged */}
             <div className="game-card p-5">
               <label className="block text-xs font-bold tracking-widest text-muted-foreground mb-3">
                 DIFFICULTY
@@ -253,7 +280,7 @@ export default function CreateQuest() {
               <p className="text-xs text-muted-foreground mt-2">{diffInfo.desc}</p>
             </div>
 
-            {/* Requirement Type */}
+            {/* Requirement Type - unchanged */}
             <div className="game-card p-5">
               <label className="block text-xs font-bold tracking-widest text-muted-foreground mb-3">
                 REQUIREMENT TYPE
@@ -282,7 +309,7 @@ export default function CreateQuest() {
               </div>
             </div>
 
-            {/* Required Media Count */}
+            {/* Required Media Count - unchanged */}
             <div className="game-card p-5">
               <label className="block text-xs font-bold tracking-widest text-muted-foreground mb-3">
                 REQUIRED MEDIA FILES
@@ -303,14 +330,13 @@ export default function CreateQuest() {
               <p className="text-xs text-muted-foreground mt-2">Players must upload {requiredMediaCount} photo(s) or video(s) as proof</p>
             </div>
 
-            {/* Team Members (only for team quests) */}
+            {/* Team Members - unchanged */}
             {requirementType === "team" && (
               <div className="game-card p-5">
                 <label className="block text-xs font-bold tracking-widest text-muted-foreground mb-3">
                   TEAM MEMBERS
                 </label>
 
-                {/* Search Input */}
                 <div className="relative mb-4">
                   <div className="relative">
                     <Search size={14} className="absolute left-3 top-3 text-muted-foreground/50" />
@@ -327,7 +353,6 @@ export default function CreateQuest() {
                     />
                   </div>
 
-                  {/* Search Dropdown */}
                   {showSearchDropdown && searchQuery && searchResults.length > 0 && (
                     <div className="absolute top-full left-0 right-0 mt-1 bg-background border border-border/50 rounded-lg shadow-lg z-10 max-h-48 overflow-y-auto">
                       {searchResults.map((user) => (
@@ -357,7 +382,6 @@ export default function CreateQuest() {
                   )}
                 </div>
 
-                {/* Selected Team Members */}
                 {teamMembers.length > 0 && (
                   <div className="space-y-2">
                     {teamMembers.map((member) => (
@@ -399,30 +423,19 @@ export default function CreateQuest() {
               </div>
             )}
 
-            {/* Duration */}
+            {/* Duration Section - Improved with Clock icon and explanation */}
             <div className="game-card p-5">
-              <label className="block text-xs font-bold tracking-widest text-muted-foreground mb-3">
-                TIME LIMIT (Optional)
+              <label className="block text-xs font-bold tracking-widest text-muted-foreground mb-3 flex items-center gap-2">
+                <Clock className="w-4 h-4" />
+                TIME LIMIT
               </label>
               <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setDuration(null)}
-                  className="p-2 rounded-lg text-xs font-bold transition-all duration-200"
-                  style={{
-                    background: duration === null ? "oklch(0.72 0.22 165 / 0.2)" : "oklch(0.14 0.015 260)",
-                    border: `1px solid ${duration === null ? "oklch(0.72 0.22 165)" : "oklch(0.2 0.02 260)"}`,
-                    color: duration === null ? "oklch(0.72 0.22 165)" : "inherit",
-                  }}
-                >
-                  UNLIMITED
-                </button>
                 {DURATION_OPTIONS.map((opt) => (
                   <button
                     key={opt.value}
                     type="button"
                     onClick={() => setDuration(opt.value)}
-                    className="p-2 rounded-lg text-xs font-bold transition-all duration-200"
+                    className="p-3 rounded-xl text-xs font-bold transition-all duration-200"
                     style={{
                       background: duration === opt.value ? "oklch(0.72 0.22 165 / 0.2)" : "oklch(0.14 0.015 260)",
                       border: `1px solid ${duration === opt.value ? "oklch(0.72 0.22 165)" : "oklch(0.2 0.02 260)"}`,
@@ -433,9 +446,12 @@ export default function CreateQuest() {
                   </button>
                 ))}
               </div>
+              <p className="text-xs text-muted-foreground mt-3">
+                The quest will automatically expire after the selected time if not completed by any player.
+              </p>
             </div>
 
-            {/* XP Reward */}
+            {/* XP Reward - unchanged */}
             <div className="game-card p-5">
               <label className="block text-xs font-bold tracking-widest text-muted-foreground mb-3">
                 XP REWARD
@@ -463,7 +479,7 @@ export default function CreateQuest() {
               </div>
             </div>
 
-            {/* Info Box */}
+            {/* Info Box - unchanged */}
             <div className="game-card p-5 border-primary/20"
               style={{ background: "oklch(0.72 0.22 165 / 0.04)" }}>
               <div className="flex gap-3">
@@ -477,16 +493,21 @@ export default function CreateQuest() {
               </div>
             </div>
 
-            {/* Preview */}
+            {/* Preview - unchanged */}
             <div className="game-card p-5 border-primary/20"
               style={{ background: "oklch(0.72 0.22 165 / 0.04)" }}>
               <div className="text-xs font-bold tracking-widest text-muted-foreground mb-3">PREVIEW</div>
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <div className="flex items-center gap-2 mb-2">
+                  <div className="flex items-center gap-2 mb-2 flex-wrap">
                     <span className={`badge-${difficulty}`}>{difficulty.toUpperCase()}</span>
                     {requirementType === "team" && (
                       <span className="badge-team">TEAM</span>
+                    )}
+                    {duration && (
+                      <span className="text-[11px] tracking-[0.2em] font-bold uppercase px-2 py-1 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
+                        TIME LIMIT {duration === "none" ? "NONE" : duration.toUpperCase()}
+                      </span>
                     )}
                   </div>
                   <div className="font-bold text-sm">{title || "Your quest title..."}</div>
@@ -501,7 +522,7 @@ export default function CreateQuest() {
               </div>
             </div>
 
-            {/* Submit */}
+            {/* Submit - unchanged */}
             <button
               type="submit"
               disabled={submitting || !title.trim() || !description.trim() || (requirementType === "team" && teamMembers.length === 0)}

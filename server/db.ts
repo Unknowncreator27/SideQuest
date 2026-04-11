@@ -226,8 +226,24 @@ export async function getUserByPasswordResetToken(token: string) {
 export async function createQuest(quest: InsertQuest): Promise<number> {
   const db = await getDb();
   if (!db) throw new Error("DB unavailable");
-  const result = await db.insert(quests).values(quest);
+  const result = await db.insert(quests).values({
+    ...quest,
+    expiresAt: quest.expiresAt || undefined,
+    status: quest.status || "active",
+  });
   return (result[0] as { insertId: number }).insertId;
+}
+
+async function expirePastQuests(db: any) {
+  await db
+    .update(quests)
+    .set({ status: "expired" })
+    .where(
+      and(
+        eq(quests.status, "active"),
+        lt(quests.expiresAt, new Date())
+      )
+    );
 }
 
 export async function getQuests(filters?: {
@@ -238,16 +254,7 @@ export async function getQuests(filters?: {
   const db = await getDb();
   if (!db) return [];
 
-  // Auto-expire quests past their expiry time
-  await db
-    .update(quests)
-    .set({ status: "expired" })
-    .where(
-      and(
-        eq(quests.status, "active"),
-        lt(quests.expiresAt, new Date())
-      )
-    );
+  await expirePastQuests(db);
 
   const conditions = [];
   if (filters?.difficulty) conditions.push(eq(quests.difficulty, filters.difficulty));
@@ -274,6 +281,7 @@ export async function getQuests(filters?: {
 export async function getQuestById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
+  await expirePastQuests(db);
   const rows = await db
     .select({
       quest: quests,
@@ -430,10 +438,35 @@ export async function getUnreadNotificationCount(userId: number) {
 
 // ─── Quest Proposals ─────────────────────────────────────────────────────────
 
-export async function createQuestProposal(proposal: InsertQuestProposal): Promise<number> {
+export async function createQuestProposal(data: {
+  title: string;
+  description: string;
+  xpReward: number;
+  difficulty: "easy" | "medium" | "hard" | "legendary";
+  proposedBy: number;
+  status: "pending" | "approved" | "rejected";
+  duration?: "none" | "1h" | "6h" | "24h" | "7d" | "30d";
+  expiresAt?: Date;
+  requirementType?: "individual" | "team";
+  requiredMediaCount?: number;
+}) {
   const db = await getDb();
-  if (!db) throw new Error("DB unavailable");
-  const result = await db.insert(questProposals).values(proposal);
+  if (!db) throw new Error("Database not available");
+
+  const proposalRow: InsertQuestProposal = {
+    title: data.title,
+    description: data.description,
+    xpReward: data.xpReward,
+    difficulty: data.difficulty,
+    proposedBy: data.proposedBy,
+    status: data.status,
+    duration: data.duration ?? "none",
+    requirementType: data.requirementType ?? "individual",
+    requiredMediaCount: data.requiredMediaCount ?? 1,
+    rejectionReason: null,
+  };
+
+  const result = await db.insert(questProposals).values(proposalRow);
   return (result[0] as { insertId: number }).insertId;
 }
 
@@ -724,11 +757,11 @@ export async function updateTeamInvitationStatus(
   return true;
 }
 
-export async function getQuestTeamMembers(questId: number) {
+export async function getQuestTeamMembers(questProposalId: number) {
   const db = await getDb();
   if (!db) return [];
 
-  // Get all accepted team members for a quest
+  // Get all accepted team members for a quest proposal
   const members = await db
     .select({
       id: users.id,
@@ -742,7 +775,7 @@ export async function getQuestTeamMembers(questId: number) {
     .where(
       and(
         eq(questTeamInvitations.status, "accepted"),
-        sql`${questTeamInvitations.questProposalId} IN (SELECT id FROM ${questProposals} WHERE id = ${questId})`
+        eq(questTeamInvitations.questProposalId, questProposalId)
       )
     );
 

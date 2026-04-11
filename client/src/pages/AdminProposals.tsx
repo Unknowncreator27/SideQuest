@@ -18,6 +18,7 @@ import {
 import { useState, useMemo } from "react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 
 export default function AdminProposals() {
   const { isAuthenticated, user: authUser } = useAuth();
@@ -80,6 +81,18 @@ export default function AdminProposals() {
     setSelectedDifficulties(new Set());
     setDateFrom("");
     setDateTo("");
+  };
+
+  const getProposalDurationLabel = (duration?: string | null) => {
+    if (!duration || duration === "none") return "None";
+    switch (duration) {
+      case "1h": return "1 hr";
+      case "6h": return "6 hrs";
+      case "24h": return "24 hrs";
+      case "7d": return "7 days";
+      case "30d": return "30 days";
+      default: return duration;
+    }
   };
 
   const approveMutation = trpc.proposal.approve.useMutation();
@@ -645,6 +658,18 @@ export default function AdminProposals() {
                           <span>
                             {new Date(proposal.createdAt).toLocaleDateString()}
                           </span>
+                          {proposal.duration != null && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="px-2 py-1 rounded-full border text-[11px] tracking-[0.2em] font-bold uppercase bg-emerald-500/10 text-emerald-300 border-emerald-500/20 cursor-help">
+                                  TIME LIMIT
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent sideOffset={4} className="bg-background text-foreground">
+                                {getProposalDurationLabel(proposal.duration)}
+                              </TooltipContent>
+                            </Tooltip>
+                          )}
                         </div>
                       </div>
 

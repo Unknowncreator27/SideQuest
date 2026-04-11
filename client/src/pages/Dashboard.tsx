@@ -25,6 +25,18 @@ function getLevelTitle(level: number) {
   return LEVEL_TITLES[Math.min(level - 1, LEVEL_TITLES.length - 1)];
 }
 
+function getProposalDurationLabel(duration?: string | null) {
+  if (!duration || duration === "none") return "NONE";
+  switch (duration) {
+    case "1h": return "1 HR";
+    case "6h": return "6 HRS";
+    case "24h": return "24 HRS";
+    case "7d": return "7 DAYS";
+    case "30d": return "30 DAYS";
+    default: return duration.toUpperCase();
+  }
+}
+
 function StatusBadge({ status }: { status: string }) {
   if (status === "approved") {
     return (
@@ -48,6 +60,16 @@ function StatusBadge({ status }: { status: string }) {
       <Clock size={10} /> PENDING
     </span>
   );
+}
+
+function formatProposalTimeLimit(start?: string | Date, end?: string | Date) {
+  if (!start || !end) return null;
+  const diffMs = new Date(end).getTime() - new Date(start).getTime();
+  if (diffMs <= 0) return null;
+  if (diffMs % (24 * 60 * 60 * 1000) === 0) return `${diffMs / (24 * 60 * 60 * 1000)}h`;
+  if (diffMs % (60 * 60 * 1000) === 0) return `${diffMs / (60 * 60 * 1000)}h`;
+  if (diffMs % (60 * 1000) === 0) return `${diffMs / (60 * 1000)}m`;
+  return `${Math.round(diffMs / 1000)}s`;
 }
 
 export default function Dashboard() {
@@ -287,8 +309,13 @@ export default function Dashboard() {
                         <p className="text-xs text-muted-foreground line-clamp-1 mb-1">
                           {proposal.description}
                         </p>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <StatusBadge status={proposal.status} />
+                          {proposal.duration != null && (
+                            <span className="text-xs text-muted-foreground">
+                              TIME LIMIT {getProposalDurationLabel(proposal.duration)}
+                            </span>
+                          )}
                           {proposal.rejectionReason && (
                             <span className="text-xs text-destructive" title={proposal.rejectionReason}>
                               {proposal.rejectionReason.substring(0, 30)}...
