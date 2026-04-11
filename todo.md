@@ -33,7 +33,7 @@
 - [x] Difficulty badges (Easy / Medium / Hard / Legendary)
 - [x] Quest status badges (Active / Expired / Completed)
 - [x] Image & video upload with preview
-- [x] AI verification with confidence score display
+- [] AI verification with confidence score display
 - [x] Real-time XP gain toast notification
 - [x] Level-up celebration animation
 - [x] Quest expiry countdown timer
