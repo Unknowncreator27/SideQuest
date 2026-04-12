@@ -8,6 +8,7 @@ import { z } from "zod";
 import { getAuth } from "firebase-admin/auth";
 import { initializeApp, cert } from "firebase-admin/app";
 import crypto from "crypto";
+import { ENV } from "./env";
 
 // Initialize Firebase Admin
 let firebaseAdminApp: any = null;
@@ -132,16 +133,20 @@ export function registerAuthRoutes(app: Express) {
   // Login endpoint
   app.post("/api/auth/login", async (req: Request, res: Response) => {
     try {
-      const data = registerSchema.pick({ email: true, password: true }).parse(req.body);
-      const openId = `email:${data.email}`;
+      const data = z.object({
+        email: z.string().min(1, "Email or username is required"),
+        password: z.string().min(6, "Password must be at least 6 characters"),
+      }).parse(req.body);
+
+      const openId = data.email.includes("@") ? `email:${data.email}` : data.email;
       const existingUser = await db.getUserByOpenId(openId);
 
       if (!existingUser || !existingUser.password) {
         return res.status(400).json({ error: "Invalid email or password" });
       }
 
-      // Check if email is verified
-      if (!existingUser.emailVerified) {
+      // Check if email is verified, but allow the seeded owner/admin account to bypass verification.
+      if (!existingUser.emailVerified && existingUser.openId !== ENV.ownerOpenId && existingUser.role !== "admin") {
         return res.status(400).json({
           error: "Please verify your email before logging in. Check your email for the verification link.",
           requiresVerification: true

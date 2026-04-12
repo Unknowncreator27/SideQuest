@@ -17,7 +17,7 @@ import {
   XCircle,
   Zap,
 } from "lucide-react";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useParams } from "wouter";
 import { toast } from "sonner";
 
@@ -66,10 +66,63 @@ export default function QuestDetail() {
     enabled: isAuthenticated,
   });
 
+  const teamMembersQuery = trpc.team.proposalMembers.useQuery(
+    { questProposalId: questRow?.quest.questProposalId ?? 0 },
+    { enabled: isAuthenticated && !!questRow?.quest.questProposalId && questRow?.quest.requirementType === "team" }
+  );
+
   const uploadMedia = trpc.submission.uploadMedia.useMutation();
   const verifySubmission = trpc.submission.verify.useMutation();
   const deleteQuestMutation = trpc.quest.delete.useMutation();
+  const questUpdate = trpc.quest.update.useMutation();
   const utils = trpc.useUtils();
+
+  const [editMode, setEditMode] = useState(false);
+  const [editTitle, setEditTitle] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editDifficulty, setEditDifficulty] = useState<"easy" | "medium" | "hard" | "legendary">("medium");
+  const [editXpReward, setEditXpReward] = useState(100);
+  const [editExpiresAt, setEditExpiresAt] = useState("");
+
+  const handleStartEdit = () => {
+    if (!questRow) return;
+    const quest = questRow.quest;
+    setEditTitle(quest.title);
+    setEditDescription(quest.description);
+    setEditDifficulty(quest.difficulty);
+    setEditXpReward(quest.xpReward);
+    setEditExpiresAt(quest.expiresAt ? new Date(quest.expiresAt).toISOString().slice(0, 16) : "");
+    setEditMode(true);
+  };
+
+  const handleCancelEdit = () => {
+    setEditMode(false);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!questRow) return;
+    if (!editTitle.trim() || editDescription.trim().length < 10) {
+      toast.error("Title and description must be filled out");
+      return;
+    }
+
+    try {
+      await questUpdate.mutateAsync({
+        id: questId,
+        title: editTitle.trim(),
+        description: editDescription.trim(),
+        difficulty: editDifficulty,
+        xpReward: editXpReward,
+        expiresAt: editExpiresAt === "" ? null : editExpiresAt,
+      });
+      await utils.quest.get.invalidate({ id: questId });
+      await utils.quest.list.invalidate();
+      toast.success("Quest updated successfully");
+      setEditMode(false);
+    } catch (err: any) {
+      toast.error(err?.message ?? "Failed to update quest");
+    }
+  };
 
   const handleDeleteQuest = async () => {
     if (!questRow) return;
@@ -87,6 +140,7 @@ export default function QuestDetail() {
   const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [lastSubmissionId, setLastSubmissionId] = useState<number | null>(null);
 
   const alreadyCompleted = mySubmissions?.some(
     (s) => s.submission.questId === questId && s.submission.status === "approved"
@@ -136,6 +190,7 @@ export default function QuestDetail() {
       return;
     }
     setUploading(true);
+    let lastSubmissionId: number | null = null;
     try {
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
@@ -152,13 +207,18 @@ export default function QuestDetail() {
           mimeType: file.type,
           fileName: file.name,
         });
+        lastSubmissionId = submissionId;
+        setLastSubmissionId(submissionId);
         if (i === files.length - 1) {
           setUploadProgress(100);
         }
       }
       setUploading(false);
+      if (!lastSubmissionId) {
+        throw new Error("Failed to upload submission");
+      }
       setVerifying(true);
-      const result = await verifySubmission.mutateAsync({ submissionId: 0 });
+      const result = await verifySubmission.mutateAsync({ submissionId: lastSubmissionId });
       setVerifyResult(result);
       utils.submission.mySubmissions.invalidate();
       utils.user.profile.invalidate();
@@ -254,14 +314,45 @@ export default function QuestDetail() {
               )}
             </div>
             <div className="flex items-center gap-3">
-              {isAdmin && (
+              {questRow?.quest.createdBy === authUser?.id && (
+                <div className="flex items-center gap-2">
+                  {!editMode ? (
+                    <button
+                      type="button"
+                      onClick={handleStartEdit}
+                      className="text-sm font-semibold px-3 py-2 rounded-lg border border-primary/20 hover:bg-primary/10 transition"
+                    >
+                      Edit Quest
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleSaveEdit}
+                        disabled={questUpdate.status === "pending"}
+                        className="text-sm font-semibold px-3 py-2 rounded-lg border border-primary/20 bg-primary/10 hover:bg-primary/15 transition"
+                      >
+                        {questUpdate.status === "pending" ? "Saving..." : "Save"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCancelEdit}
+                        className="text-sm font-semibold px-3 py-2 rounded-lg border border-border/50 hover:bg-muted/10 transition"
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+              {isAdmin && !editMode && (
                 <button
                   type="button"
                   onClick={handleDeleteQuest}
-                  disabled={deleteQuestMutation.isLoading}
+                  disabled={deleteQuestMutation.status === "pending"}
                   className="text-sm text-destructive font-semibold px-3 py-2 rounded-lg border border-destructive/20 hover:bg-destructive/10 transition"
                 >
-                  {deleteQuestMutation.isLoading ? "Deleting..." : "Delete Quest"}
+                  {deleteQuestMutation.status === "pending" ? "Deleting..." : "Delete Quest"}
                 </button>
               )}
               <div
@@ -273,8 +364,69 @@ export default function QuestDetail() {
             </div>
           </div>
 
-          <h1 className="text-3xl font-black mb-3">{quest.title}</h1>
-          <p className="text-muted-foreground leading-relaxed mb-4">{quest.description}</p>
+          {editMode ? (
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold tracking-widest text-muted-foreground mb-2">Quest Title</label>
+                <input
+                  type="text"
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  className="w-full bg-transparent text-2xl font-black focus:outline-none border-b border-border/50 pb-2"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold tracking-widest text-muted-foreground mb-2">Description</label>
+                <textarea
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                  rows={4}
+                  className="w-full bg-transparent text-sm focus:outline-none resize-none leading-relaxed border border-border/50 rounded-xl p-3"
+                />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="space-y-2">
+                  <label className="block text-xs font-bold tracking-widest text-muted-foreground">Difficulty</label>
+                  <select
+                    value={editDifficulty}
+                    onChange={(e) => setEditDifficulty(e.target.value as any)}
+                    className="w-full bg-background border border-border/50 rounded-xl px-3 py-2 text-sm"
+                  >
+                    <option value="easy">Easy</option>
+                    <option value="medium">Medium</option>
+                    <option value="hard">Hard</option>
+                    <option value="legendary">Legendary</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="block text-xs font-bold tracking-widest text-muted-foreground">XP Reward</label>
+                  <input
+                    type="number"
+                    min={10}
+                    max={5000}
+                    step={10}
+                    value={editXpReward}
+                    onChange={(e) => setEditXpReward(Number(e.target.value))}
+                    className="w-full bg-background border border-border/50 rounded-xl px-3 py-2 text-sm"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="block text-xs font-bold tracking-widest text-muted-foreground">Expires At</label>
+                  <input
+                    type="datetime-local"
+                    value={editExpiresAt}
+                    onChange={(e) => setEditExpiresAt(e.target.value)}
+                    className="w-full bg-background border border-border/50 rounded-xl px-3 py-2 text-sm"
+                  />
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              <h1 className="text-3xl font-black mb-3">{quest.title}</h1>
+              <p className="text-muted-foreground leading-relaxed mb-4">{quest.description}</p>
+            </>
+          )}
 
           {/* Requirements */}
           <div className="flex items-center gap-3 mb-4 text-xs">
@@ -283,6 +435,33 @@ export default function QuestDetail() {
                 <Users size={12} />
                 TEAM QUEST
               </span>
+            )}
+            {quest.requirementType === "team" && (
+              <div className="flex flex-col gap-2 mt-2 text-sm text-muted-foreground">
+                <div className="flex items-center gap-2 text-xs uppercase tracking-[0.2em] font-bold text-muted-foreground">
+                  <Users size={12} /> TEAM MEMBERS
+                </div>
+                {teamMembersQuery.isLoading ? (
+                  <div className="text-xs">Loading team members...</div>
+                ) : teamMembersQuery.data && teamMembersQuery.data.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {teamMembersQuery.data.map((member) => (
+                      <div key={member.id} className="inline-flex items-center gap-2 px-3 py-2 rounded-full bg-border/60 border border-border text-xs">
+                        {member.avatarUrl ? (
+                          <img src={member.avatarUrl} alt={member.name || "Member"} className="w-5 h-5 rounded-full" />
+                        ) : (
+                          <div className="w-5 h-5 rounded-full bg-muted flex items-center justify-center text-[10px] text-muted-foreground">
+                            {member.name?.[0]?.toUpperCase() ?? "?"}
+                          </div>
+                        )}
+                        <span>{member.name ?? "Player"}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-xs">No accepted team members yet.</div>
+                )}
+              </div>
             )}
             {quest.requirementType === "individual" && (
               <span className="flex items-center gap-1 px-2 py-1 rounded-lg bg-purple-500/15 text-purple-400 border border-purple-500/30">

@@ -90,6 +90,7 @@ async function seedOwnerAdmin() {
     if (ownerEmail) {
       ownerValues.email = ownerEmail;
       ownerValues.loginMethod = "email-password";
+      ownerValues.emailVerified = true;
     }
 
     if (adminPassword) {
@@ -102,6 +103,7 @@ async function seedOwnerAdmin() {
         role: ownerValues.role,
         email: ownerValues.email ?? null,
         loginMethod: ownerValues.loginMethod ?? null,
+        emailVerified: ownerValues.emailVerified ?? false,
         ...(ownerValues.password ? { password: ownerValues.password } : {}),
       },
     });

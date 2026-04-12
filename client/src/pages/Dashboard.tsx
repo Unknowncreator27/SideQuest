@@ -2,6 +2,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { getLoginUrl } from "@/const";
 import { trpc } from "@/lib/trpc";
 import { motion } from "framer-motion";
+import { useState } from "react";
 import {
   CheckCircle,
   Clock,
@@ -15,6 +16,11 @@ import {
   Zap,
 } from "lucide-react";
 import { Link } from "wouter";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+} from "@/components/ui/dropdown-menu";
 
 const LEVEL_TITLES = [
   "Novice", "Apprentice", "Adventurer", "Warrior", "Champion",
@@ -74,6 +80,7 @@ function formatProposalTimeLimit(start?: string | Date, end?: string | Date) {
 
 export default function Dashboard() {
   const { isAuthenticated, user: authUser } = useAuth();
+  const utils = trpc.useUtils();
   const { data: profile, isLoading: profileLoading } = trpc.user.profile.useQuery(undefined, {
     enabled: isAuthenticated,
     refetchInterval: 15000,
@@ -84,6 +91,11 @@ export default function Dashboard() {
   const { data: proposals, isLoading: proposalsLoading } = trpc.proposal.myProposals.useQuery(undefined, {
     enabled: isAuthenticated,
   });
+  const { data: invitations, isLoading: invitationsLoading } = trpc.team.myInvitations.useQuery(undefined, {
+    enabled: isAuthenticated,
+  });
+  const respondToInvitation = trpc.team.respondToInvitation.useMutation();
+  const [respondingInvitationId, setRespondingInvitationId] = useState<number | null>(null);
 
   if (!isAuthenticated) {
     return (
@@ -114,6 +126,8 @@ export default function Dashboard() {
   const pendingSubs = submissions?.filter((s) => s.submission.status === "pending") ?? [];
   const rejectedSubs = submissions?.filter((s) => s.submission.status === "rejected") ?? [];
   const totalXpEarned = approvedSubs.reduce((sum, s) => sum + (s.submission.xpAwarded ?? 0), 0);
+  const activeInvitations = invitations?.filter((invite) => invite.status === "pending") ?? [];
+  const invitationHistory = invitations?.filter((invite) => invite.status !== "pending") ?? [];
 
   return (
     <div className="min-h-screen py-8">
@@ -237,6 +251,163 @@ export default function Dashboard() {
           ))}
         </motion.div>
 
+        {/* Completed Quests */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.25 }}
+          className="mb-8"
+        >
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-xl font-black tracking-wider">COMPLETED QUESTS</h2>
+              <p className="text-xs text-muted-foreground">
+                {approvedSubs.length > 0
+                  ? `${approvedSubs.length} completed quest${approvedSubs.length !== 1 ? "s" : ""}`
+                  : "No completed quests yet. Keep going!"}
+              </p>
+            </div>
+            <Link href="/quests" className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground hover:text-foreground">
+              Browse quests
+            </Link>
+          </div>
+
+          {approvedSubs.length === 0 ? (
+            <div className="game-card p-6 text-center text-sm text-muted-foreground">
+              Complete a quest to see it listed here with XP earned and completion date.
+            </div>
+          ) : (
+            <div className="grid gap-3">
+              {approvedSubs.slice(0, 4).map((entry) => (
+                <div key={entry.submission.id} className="game-card p-4 flex items-center justify-between gap-4">
+                  <div>
+                    <div className="font-semibold">{entry.quest?.title ?? "Unknown Quest"}</div>
+                    <div className="text-xs text-muted-foreground mt-1">
+                      Completed on {new Date(entry.submission.createdAt).toLocaleDateString()}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-sm font-black" style={{ color: "oklch(0.72 0.22 165)" }}>
+                      +{entry.submission.xpAwarded ?? 0} XP
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-1">{entry.quest?.difficulty?.toUpperCase() ?? "UNKNOWN"}</div>
+                  </div>
+                </div>
+              ))}
+              {approvedSubs.length > 4 && (
+                <div className="text-right text-xs text-muted-foreground">
+                  Showing 4 of {approvedSubs.length} completed quests.
+                </div>
+              )}
+            </div>
+          )}
+        </motion.div>
+
+        {/* Team Invitations */}
+        {(activeInvitations.length > 0 || invitationHistory.length > 0) && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.25 }}
+            className="mb-8"
+          >
+            <div className="flex items-center justify-between mb-4 gap-3">
+              <div>
+                <h2 className="text-xl font-black tracking-wider">TEAM INVITATIONS</h2>
+                <p className="text-xs text-muted-foreground">
+                  {activeInvitations.length > 0
+                    ? `${activeInvitations.length} pending invite${activeInvitations.length !== 1 ? "s" : ""}`
+                    : "No pending invites. View your history."}
+                </p>
+              </div>
+              {invitationHistory.length > 0 && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button className="btn-game px-3 py-2 text-xs">History</button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-[24rem] max-h-96 overflow-y-auto p-2">
+                    <div className="px-2 py-1 text-xs uppercase tracking-[0.24em] text-muted-foreground font-bold">
+                      Invitation History
+                    </div>
+                    <div className="space-y-2 mt-2">
+                      {invitationHistory.map((invite) => (
+                        <div key={invite.id} className="rounded-xl border border-border bg-background p-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <div className="font-semibold text-sm truncate">{invite.questProposal.title}</div>
+                              <div className="text-xs text-muted-foreground">from {invite.invitedByUser.name || "Unknown"}</div>
+                            </div>
+                            <span className="text-[11px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">
+                              {invite.status}
+                            </span>
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-2 line-clamp-2">
+                            {invite.questProposal.description}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+            </div>
+
+            {activeInvitations.length > 0 ? (
+              <div className="flex flex-col gap-3">
+                {activeInvitations.map((invite) => (
+                  <div key={invite.id} className="game-card p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-sm truncate">{invite.questProposal.title}</span>
+                        <span className="text-xs text-muted-foreground">from {invite.invitedByUser.name || "Unknown"}</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1">{invite.questProposal.description}</p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          setRespondingInvitationId(invite.id);
+                          try {
+                            await respondToInvitation.mutateAsync({ invitationId: invite.id, accepted: true });
+                            await utils.team.myInvitations.invalidate();
+                          } finally {
+                            setRespondingInvitationId(null);
+                          }
+                        }}
+                        disabled={respondToInvitation.isPending && respondingInvitationId === invite.id}
+                        className="btn-game px-4 py-2 text-xs"
+                      >
+                        Accept
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          setRespondingInvitationId(invite.id);
+                          try {
+                            await respondToInvitation.mutateAsync({ invitationId: invite.id, accepted: false });
+                            await utils.team.myInvitations.invalidate();
+                          } finally {
+                            setRespondingInvitationId(null);
+                          }
+                        }}
+                        disabled={respondToInvitation.isPending && respondingInvitationId === invite.id}
+                        className="btn-game px-4 py-2 text-xs bg-destructive/15 text-destructive border border-destructive/20"
+                      >
+                        Decline
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : invitationHistory.length === 0 ? (
+              <div className="game-card p-4 text-sm text-muted-foreground">
+                No team invites at the moment.
+              </div>
+            ) : null}
+          </motion.div>
+        )}
+
         {/* Proposals Section */}
         {proposals && proposals.length > 0 && (
           <motion.div
@@ -313,7 +484,7 @@ export default function Dashboard() {
                           <StatusBadge status={proposal.status} />
                           {proposal.duration != null && (
                             <span className="text-xs text-muted-foreground">
-                              TIME LIMIT {getProposalDurationLabel(proposal.duration)}
+                              TIME LIMIT: {getProposalDurationLabel(proposal.duration)}
                             </span>
                           )}
                           {proposal.rejectionReason && (

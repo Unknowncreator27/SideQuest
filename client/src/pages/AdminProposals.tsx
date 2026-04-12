@@ -662,7 +662,7 @@ export default function AdminProposals() {
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <span className="px-2 py-1 rounded-full border text-[11px] tracking-[0.2em] font-bold uppercase bg-emerald-500/10 text-emerald-300 border-emerald-500/20 cursor-help">
-                                  TIME LIMIT
+                                  TIME LIMIT:
                                 </span>
                               </TooltipTrigger>
                               <TooltipContent sideOffset={4} className="bg-background text-foreground">

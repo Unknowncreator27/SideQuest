@@ -131,7 +131,9 @@ export default function CreateQuest() {
         description: description.trim(),
         xpReward,
         difficulty,
-        duration: duration === "none" ? undefined : duration,
+        duration,
+        requirementType,
+        requiredMediaCount,
       });
 
       // Invite team members if it's a team quest
@@ -427,7 +429,7 @@ export default function CreateQuest() {
             <div className="game-card p-5">
               <label className="block text-xs font-bold tracking-widest text-muted-foreground mb-3 flex items-center gap-2">
                 <Clock className="w-4 h-4" />
-                TIME LIMIT
+                TIME LIMIT:
               </label>
               <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
                 {DURATION_OPTIONS.map((opt) => (
@@ -506,7 +508,7 @@ export default function CreateQuest() {
                     )}
                     {duration && (
                       <span className="text-[11px] tracking-[0.2em] font-bold uppercase px-2 py-1 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
-                        TIME LIMIT {duration === "none" ? "NONE" : duration.toUpperCase()}
+                        TIME LIMIT: {duration === "none" ? "NONE" : duration.toUpperCase()}
                       </span>
                     )}
                   </div>

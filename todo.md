@@ -186,20 +186,21 @@
 - [x] Add remove button for each uploaded file
 
 ## Team Submission Logic (IN PROGRESS)
-- [ ] Update submissions table to support team member IDs
-- [ ] Implement backend logic to award XP to all team members
-- [ ] Add team member selection UI in QuestDetail
-- [ ] Validate team member count for team quests
-- [ ] Send notifications to all team members on verification
-- [ ] Display team members on submission details
+- [x] Update submissions table to support team member IDs
+- [x] Implement backend logic to award XP to all team members
+- [x] Add team member selection UI in QuestDetail
+- [x] Validate team member count for team quests
+- [x] Send notifications to all team members on verification
+- [x] Display team members on submission details
 
 
 ## Team Quest Features (IN PROGRESS)
-- [ ] Allow team members to be added when creating team quests
-- [ ] Add member search/selection UI in CreateQuest for team quests
-- [ ] Send invitations to selected team members
-- [ ] Allow team members to accept/decline quest invitations
-- [ ] Award XP to all team members on quest completion
+- [x] Allow team members to be added when creating team quests
+- [x] Add member search/selection UI in CreateQuest for team quests
+- [x] Send invitations to selected team members
+- [x] Allow team members to accept/decline quest invitations
+- [x] Archive accepted and declined invitations into a history section
+- [x] Award XP to all team members on quest completion
 
 ## Game Monetization (PLANNED)
 - [ ] Add game integration (Steam, PlayStation, Xbox, etc.)
@@ -245,13 +246,13 @@
 ## Quest Management (PLANNED)
 - [ ] Add quest deletion functionality
 - [ ] Implement soft delete for quest history
-- [ ] Add quest edit capability
+- [x] Add quest edit capability
 - [ ] Create quest archive feature
 - [ ] Add quest activity logs
 
-## Completed Quest Display (PLANNED)
-- [ ] Add completed quests section to Dashboard
-- [ ] Show completion date and XP earned
+## Completed Quest Display (IN PROGRESS)
+- [x] Add completed quests section to Dashboard
+- [x] Show completion date and XP earned
 - [ ] Add quest replay option for repeatable quests
 - [ ] Display completion badges/medals
 - [ ] Show completion statistics

@@ -9,6 +9,7 @@ import {
   createSubmission,
   createTeamInvitation,
   deleteFilterPreset,
+  getQuestTeamMemberIds,
   deleteQuest,
   getFilterPresets,
   getLeaderboard,
@@ -25,6 +26,7 @@ import {
   getTeamInvitationsByUser,
   getUserById,
   getDb,
+  getQuestTeamMembers,
   getAllUsers,
   countAdmins,
   updateUserRole,
@@ -56,7 +58,7 @@ function randomSuffix() {
   return Math.random().toString(36).substring(2, 10);
 }
 
-function getProposalDurationMs(duration?: string | null, createdAt?: Date | string, expiresAt?: Date | string) {
+function getProposalDurationMs(duration?: string | null, createdAt?: Date | string | null, expiresAt?: Date | string | null) {
   if (duration && duration !== "none") {
     switch (duration) {
       case "1h": return 60 * 60 * 1000;
@@ -193,6 +195,15 @@ const submissionRouter = router({
       const fileKey = `submissions/user-${ctx.user.id}/quest-${input.questId}/${randomSuffix()}.${ext}`;
       const { url } = await storagePut(fileKey, buffer, input.mimeType);
 
+      let teamMemberIds: number[] | undefined;
+      if (quest.quest.requirementType === "team") {
+        const memberIds = await getQuestTeamMemberIds(quest.quest.id);
+        if (!memberIds.includes(ctx.user.id)) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Only invited team members can submit for this quest." });
+        }
+        teamMemberIds = memberIds;
+      }
+
       const submissionId = await createSubmission({
         questId: input.questId,
         userId: ctx.user.id,
@@ -200,6 +211,7 @@ const submissionRouter = router({
         mediaType: input.mediaType,
         mediaKey: fileKey,
         status: "pending",
+        teamMemberIds,
       });
 
       return { submissionId, mediaUrl: url };
@@ -215,6 +227,8 @@ const submissionRouter = router({
       if (sub.status !== "pending") {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Submission already processed" });
       }
+
+      const teamMemberIds: number[] = sub.teamMemberIds ? JSON.parse(sub.teamMemberIds) : [];
 
       const questRow = await getQuestById(sub.questId);
       if (!questRow) throw new TRPCError({ code: "NOT_FOUND", message: "Quest not found" });
@@ -295,27 +309,48 @@ Always respond with valid JSON matching the schema provided.`;
 
       if (approved) {
         await updateQuestCompletionCount(quest.id);
-        const xpResult = await addXpToUser(ctx.user.id, quest.xpReward);
-        leveledUp = xpResult.leveledUp;
-        newLevel = xpResult.newLevel;
-        newXp = xpResult.newXp;
 
-        // Notify the submitter
-        await createNotification({
-          userId: ctx.user.id,
-          type: "submission_verified",
-          title: "Quest Completed! 🎉",
-          message: `Your submission for "${quest.title}" was verified! You earned ${quest.xpReward} XP.`,
-          metadata: JSON.stringify({ questId: quest.id, xpAwarded: quest.xpReward }),
-        });
+        const allParticipantIds = Array.from(new Set([sub.userId, ...teamMemberIds]));
 
-        await createNotification({
-          userId: ctx.user.id,
-          type: "xp_gained",
-          title: `+${quest.xpReward} XP Earned`,
-          message: `You gained ${quest.xpReward} XP for completing "${quest.title}".`,
-          metadata: JSON.stringify({ xp: quest.xpReward }),
-        });
+        for (const participantId of allParticipantIds) {
+          if (await hasUserCompletedQuest(participantId, quest.id)) {
+            continue;
+          }
+
+          const xpResult = await addXpToUser(participantId, quest.xpReward);
+
+          if (participantId === ctx.user.id) {
+            leveledUp = xpResult.leveledUp;
+            newLevel = xpResult.newLevel;
+            newXp = xpResult.newXp;
+          }
+
+          await createNotification({
+            userId: participantId,
+            type: "submission_verified",
+            title: "Quest Completed! 🎉",
+            message: `Your submission for "${quest.title}" was verified! You earned ${quest.xpReward} XP.`,
+            metadata: JSON.stringify({ questId: quest.id, xpAwarded: quest.xpReward }),
+          });
+
+          await createNotification({
+            userId: participantId,
+            type: "xp_gained",
+            title: `+${quest.xpReward} XP Earned`,
+            message: `You gained ${quest.xpReward} XP for completing "${quest.title}".`,
+            metadata: JSON.stringify({ xp: quest.xpReward }),
+          });
+
+          if (participantId !== ctx.user.id) {
+            await createNotification({
+              userId: participantId,
+              type: "milestone",
+              title: "Team Quest Complete!",
+              message: `Your team submission for "${quest.title}" was verified!`,
+              metadata: JSON.stringify({ questId: quest.id }),
+            });
+          }
+        }
 
         if (leveledUp) {
           await createNotification({
@@ -503,6 +538,12 @@ const teamRouter = router({
     return getTeamInvitationsByUser(ctx.user.id);
   }),
 
+  proposalMembers: protectedProcedure
+    .input(z.object({ questProposalId: z.number() }))
+    .query(async ({ input }) => {
+      return getQuestTeamMembers(input.questProposalId);
+    }),
+
   respondToInvitation: protectedProcedure
     .input(
       z.object({
@@ -623,6 +664,7 @@ submit: protectedProcedure
         expiresAt: questExpiresAt,
         requirementType: proposal[0].requirementType,
         requiredMediaCount: proposal[0].requiredMediaCount,
+        questProposalId: input.proposalId,
       });
 
       await updateQuestProposal(input.proposalId, { status: "approved" });
@@ -713,6 +755,7 @@ submit: protectedProcedure
           expiresAt: questExpiresAt,
           requirementType: proposal[0].requirementType,
           requiredMediaCount: proposal[0].requiredMediaCount,
+          questProposalId: proposalId,
         });
 
         await updateQuestProposal(proposalId, { status: "approved" });
@@ -830,7 +873,7 @@ export const appRouter = router({
     me: publicProcedure.query((opts) => opts.ctx.user),
     logout: publicProcedure.mutation(({ ctx }) => {
       const cookieOptions = getSessionCookieOptions(ctx.req);
-      ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
+      ctx.res.clearCookie(COOKIE_NAME, cookieOptions);
       return { success: true } as const;
     }),
     verifyEmail: publicProcedure

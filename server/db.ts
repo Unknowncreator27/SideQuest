@@ -234,6 +234,39 @@ export async function createQuest(quest: InsertQuest): Promise<number> {
   return (result[0] as { insertId: number }).insertId;
 }
 
+export async function getQuestTeamMemberIds(questId: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const questRow = await db
+    .select({ quest: quests })
+    .from(quests)
+    .where(eq(quests.id, questId))
+    .limit(1);
+
+  if (!questRow[0]) return [];
+
+  const ownerId = questRow[0].quest.createdBy;
+  const proposalId = questRow[0].quest.questProposalId;
+  const memberIds = new Set<number>([ownerId]);
+
+  if (proposalId) {
+    const acceptedInvites = await db
+      .select({ invitedUserId: questTeamInvitations.invitedUserId })
+      .from(questTeamInvitations)
+      .where(
+        and(
+          eq(questTeamInvitations.questProposalId, proposalId),
+          eq(questTeamInvitations.status, "accepted")
+        )
+      );
+
+    acceptedInvites.forEach((row) => memberIds.add(row.invitedUserId));
+  }
+
+  return Array.from(memberIds);
+}
+
 async function expirePastQuests(db: any) {
   await db
     .update(quests)
@@ -321,10 +354,14 @@ export async function updateQuest(questId: number, data: Partial<InsertQuest>) {
 
 // ─── Submissions ─────────────────────────────────────────────────────────────
 
-export async function createSubmission(sub: InsertSubmission): Promise<number> {
+export async function createSubmission(sub: Omit<InsertSubmission, "teamMemberIds"> & { teamMemberIds?: number[] | string }): Promise<number> {
   const db = await getDb();
   if (!db) throw new Error("DB unavailable");
-  const result = await db.insert(submissions).values(sub);
+  const submissionRow: InsertSubmission = {
+    ...sub,
+    teamMemberIds: sub.teamMemberIds ? JSON.stringify(sub.teamMemberIds) : undefined,
+  };
+  const result = await db.insert(submissions).values(submissionRow);
   return (result[0] as { insertId: number }).insertId;
 }
 
@@ -389,9 +426,12 @@ export async function hasUserCompletedQuest(userId: number, questId: number) {
     .from(submissions)
     .where(
       and(
-        eq(submissions.userId, userId),
         eq(submissions.questId, questId),
-        eq(submissions.status, "approved")
+        eq(submissions.status, "approved"),
+        or(
+          eq(submissions.userId, userId),
+          sql`JSON_CONTAINS(${submissions.teamMemberIds}, JSON_QUOTE(${userId}))`
+        )
       )
     )
     .limit(1);
