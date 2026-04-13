@@ -209,12 +209,34 @@
 - [ ] Add game profile verification system
 - [ ] Display game progress on user dashboard
 
-## Incentives & Unlockables (PLANNED)
-- [ ] Design unlock system (badges, cosmetics, titles)
-- [ ] Create milestone rewards at each level
+## Incentives & Unlockables (IN PROGRESS)
+- [x] Design unlock system (badges, cosmetics, titles)
+- [x] Create milestone rewards at each level
 - [ ] Add cosmetic shop with XP-purchasable items
 - [ ] Display unlocked badges on user profile
 - [ ] Add achievement tracking and display
+- [ ] Define reward categories and unlock logic for quests, levels, and events
+- [x] Add backend schema and endpoints for unlockables and earned rewards
+- [ ] Build unlockables dashboard UI with progress, inventory, and upcoming goals
+- [ ] Send unlock notifications and celebration animations to users
+- [ ] Add admin controls for managing unlockable rewards
+- [ ] Add “next unlockable” progress preview to dashboard
+- [ ] Add unlockable effects beyond XP: titles, boosts, cosmetic rewards
+- [ ] Add milestone progress cards for quest completions and levels
+- [ ] Add daily and weekly challenge tracking to support engagement
+- [ ] Add streak tracking and streak bonus rewards
+- [ ] Add social activity / feed ideas for completed quests and unlocks
+- [ ] Add daily challenges and streak system implementation
+
+## Daily Challenges & Streaks (PLANNED)
+- [ ] Add daily_challenges table with title, description, rewardXp, type, target, active
+- [ ] Add user_challenges table with userId, challengeId, completedAt, progress, streakCount
+- [ ] Track daily challenge completion and streak progress per user
+- [ ] Show challenge status and streak info on Dashboard
+- [ ] Award XP bonus for streaks and daily completion
+- [ ] Add backend routes and frontend queries for active challenges
+- [ ] Add notification flow for streak keepers and resets
+- [ ] Test challenge and streak workflows
 
 ## Home Screen Updates (PLANNED)
 - [ ] Add quest feed to home screen showing recent completions

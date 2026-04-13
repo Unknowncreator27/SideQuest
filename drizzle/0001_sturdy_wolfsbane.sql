@@ -1,7 +1,7 @@
 CREATE TABLE `notifications` (
 	`id` int AUTO_INCREMENT NOT NULL,
 	`userId` int NOT NULL,
-	`type` enum('xp_gained','level_up','quest_completed','submission_verified','submission_rejected','milestone') NOT NULL,
+	`type` enum('xp_gained','level_up','quest_completed','submission_verified','submission_rejected','milestone', 'submission_pending') NOT NULL,
 	`title` varchar(255) NOT NULL,
 	`message` text NOT NULL,
 	`read` boolean NOT NULL DEFAULT false,

@@ -11,7 +11,7 @@ type StorageConfig =
 const FIREBASE_BUCKET =
   process.env.FIREBASE_STORAGE_BUCKET ||
   process.env.VITE_FIREBASE_STORAGE_BUCKET ||
-  `${process.env.FIREBASE_PROJECT_ID}.firebasestorage.app`;
+  `${process.env.FIREBASE_PROJECT_ID}.appspot.com`;
 
 const LOCAL_UPLOAD_DIR = path.join(process.cwd(), "uploads");
 

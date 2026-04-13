@@ -66,13 +66,19 @@ export default function QuestDetail() {
     enabled: isAuthenticated,
   });
 
+  const { data: questSubmissions } = trpc.submission.questSubmissions.useQuery(
+    { questId },
+    { enabled: isAuthenticated && isAdmin && !!questId }
+  );
+
   const teamMembersQuery = trpc.team.proposalMembers.useQuery(
     { questProposalId: questRow?.quest.questProposalId ?? 0 },
     { enabled: isAuthenticated && !!questRow?.quest.questProposalId && questRow?.quest.requirementType === "team" }
   );
 
   const uploadMedia = trpc.submission.uploadMedia.useMutation();
-  const verifySubmission = trpc.submission.verify.useMutation();
+  const createPendingSubmission = trpc.submission.createPendingSubmission.useMutation();
+  const reviewSubmission = trpc.submission.review.useMutation();
   const deleteQuestMutation = trpc.quest.delete.useMutation();
   const questUpdate = trpc.quest.update.useMutation();
   const utils = trpc.useUtils();
@@ -148,6 +154,9 @@ export default function QuestDetail() {
   const pendingSubmission = mySubmissions?.find(
     (s) => s.submission.questId === questId && s.submission.status === "pending"
   );
+  const pendingReviews = questSubmissions?.filter(
+    (s) => s.submission.status === "pending"
+  );
 
   const handleFile = useCallback((f: File) => {
     if (f.size > 50 * 1024 * 1024) {
@@ -182,24 +191,32 @@ export default function QuestDetail() {
     setPreviews(newPreviews);
   };
 
-  const handleSubmit = async () => {
-    if (files.length === 0 || !questRow) return;
-    const maxFiles = questRow.quest.requiredMediaCount || 1;
-    if (files.length !== maxFiles) {
-      toast.error(`Please upload exactly ${maxFiles} file(s)`);
-      return;
-    }
-    setUploading(true);
-    let lastSubmissionId: number | null = null;
-    try {
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        setUploadProgress(Math.round((i / files.length) * 100));
-        const buffer = await file.arrayBuffer();
-        const base64 = btoa(
-          new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), "")
-        );
-        const isVid = file.type.startsWith("video/");
+const handleSubmit = async () => {
+  if (files.length === 0 || !questRow) return;
+
+  const maxFiles = questRow.quest.requiredMediaCount || 1;
+  if (files.length !== maxFiles) {
+    toast.error(`Please upload exactly ${maxFiles} file(s)`);
+    return;
+  }
+
+  setUploading(true);
+  let lastSubmissionId: number | null = null;
+  let uploadSuccess = true;
+
+  try {
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      setUploadProgress(Math.round((i / files.length) * 100));
+
+      const buffer = await file.arrayBuffer();
+      const base64 = btoa(
+        new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), "")
+      );
+      const isVid = file.type.startsWith("video/");
+
+      try {
+        // Try normal upload first
         const { submissionId } = await uploadMedia.mutateAsync({
           questId,
           mediaBase64: base64,
@@ -207,49 +224,82 @@ export default function QuestDetail() {
           mimeType: file.type,
           fileName: file.name,
         });
+
         lastSubmissionId = submissionId;
         setLastSubmissionId(submissionId);
-        if (i === files.length - 1) {
-          setUploadProgress(100);
-        }
-      }
-      setUploading(false);
-      if (!lastSubmissionId) {
-        throw new Error("Failed to upload submission");
-      }
-      setVerifying(true);
-      const result = await verifySubmission.mutateAsync({ submissionId: lastSubmissionId });
-      setVerifyResult(result);
-      utils.submission.mySubmissions.invalidate();
-      utils.user.profile.invalidate();
-      utils.notification.list.invalidate();
-      utils.notification.unreadCount.invalidate();
+      } catch (err: any) {
+        console.warn(`Upload failed (expected - bucket missing):`, err.message);
+        uploadSuccess = false;
 
-        if (result.approved) {
-          toast.success(`Quest verified! +${result.xpAwarded} XP earned!`, {
-            duration: 5000,
-            icon: "⚡",
-          });
-          if (result.leveledUp) {
-            setTimeout(() => {
-              toast.success(`LEVEL UP! You're now Level ${result.newLevel}! 🚀`, {
-                duration: 6000,
-                icon: "🚀",
-              });
-            }, 1500);
-          }
-          setFiles([]);
-          setPreviews([]);
-        } else {
-          toast.error("Submission not verified. Try again with better proof!", {
-            duration: 5000,
-          });
-        }
+        // Fallback: Create pending submission WITHOUT media upload
+        const fallbackResult = await createPendingSubmission.mutateAsync({
+          questId,
+          mediaType: isVid ? "video" : "image",
+          note: "Media upload skipped - Firebase bucket not configured. Awaiting admin review.",
+        });
+
+        lastSubmissionId = fallbackResult.submissionId;
+        setLastSubmissionId(lastSubmissionId);
+      }
+
+      if (i === files.length - 1) {
+        setUploadProgress(100);
+      }
+    }
+
+    setUploading(false);
+
+    if (!lastSubmissionId) {
+      throw new Error("Failed to create submission");
+    }
+
+    // Refresh data
+    await utils.submission.mySubmissions.invalidate();
+    await utils.notification.list.invalidate();
+    await utils.notification.unreadCount.invalidate();
+
+    toast.success(
+      uploadSuccess 
+        ? "Submission uploaded successfully. It is now pending admin review." 
+        : "Submission created as pending admin review (upload failed due to storage issue).",
+      { duration: 6000 }
+    );
+
+    setFiles([]);
+    setPreviews([]);
+  } catch (err: any) {
+    console.error(err);
+    toast.error(err?.message ?? "Something went wrong");
+  } finally {
+    setUploading(false);
+    setVerifying(false);
+  }
+};
+
+  const handleReviewSubmission = async (submissionId: number, approved: boolean) => {
+    try {
+      const result = await reviewSubmission.mutateAsync({
+        submissionId,
+        approved,
+        reason: approved ? "Approved by admin" : "Rejected by admin",
+      });
+
+      await utils.submission.questSubmissions.invalidate({ questId });
+      await utils.submission.mySubmissions.invalidate();
+      await utils.user.profile.invalidate();
+      await utils.unlockables.myUnlockables.invalidate();
+      await utils.notification.list.invalidate();
+      await utils.notification.unreadCount.invalidate();
+      await utils.quest.get.invalidate({ id: questId });
+
+      toast.success(
+        approved
+          ? `Submission approved. ${result.xpAwarded} XP awarded.`
+          : "Submission rejected.",
+        { duration: 5000 }
+      );
     } catch (err: any) {
-      toast.error(err?.message ?? "Something went wrong");
-    } finally {
-      setUploading(false);
-      setVerifying(false);
+      toast.error(err?.message ?? "Failed to review submission");
     }
   };
 
@@ -501,6 +551,64 @@ export default function QuestDetail() {
             <div>
               <div className="font-bold text-sm" style={{ color: "oklch(0.72 0.22 165)" }}>Quest Completed!</div>
               <div className="text-xs text-muted-foreground">You've already verified this quest.</div>
+            </div>
+          </motion.div>
+        )}
+
+        {isAdmin && pendingReviews && pendingReviews.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="game-card p-6 mb-6"
+          >
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-xl font-black tracking-wider">PENDING SUBMISSIONS</h2>
+                <p className="text-sm text-muted-foreground">Review and approve submissions before XP is awarded.</p>
+              </div>
+            </div>
+            <div className="space-y-4">
+              {pendingReviews.map((submission) => (
+                <div key={submission.submission.id} className="p-4 rounded-3xl border border-border/50 bg-background">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <div className="font-bold">Submission #{submission.submission.id}</div>
+                      <div className="text-xs text-muted-foreground mt-1">Submitted by {submission.user?.name ?? "Unknown"}</div>
+                      <div className="text-xs text-muted-foreground mt-1">{new Date(submission.submission.createdAt).toLocaleString()}</div>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleReviewSubmission(submission.submission.id, false)}
+                        className="px-3 py-2 rounded-xl border border-destructive/20 text-destructive text-sm font-semibold hover:bg-destructive/10"
+                      >
+                        Reject
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleReviewSubmission(submission.submission.id, true)}
+                        className="px-3 py-2 rounded-xl bg-emerald-500/15 text-emerald-500 text-sm font-semibold hover:bg-emerald-500/20"
+                      >
+                        Approve
+                      </button>
+                    </div>
+                  </div>
+                  {submission.submission.mediaUrl && !submission.submission.mediaUrl.startsWith("pending-review://") ? (
+                    <div className="mt-4">
+                      {submission.submission.mediaType === "video" ? (
+                        <video src={submission.submission.mediaUrl} controls className="w-full rounded-2xl object-cover max-h-64" />
+                      ) : (
+                        <img src={submission.submission.mediaUrl} alt="Submission proof" className="w-full rounded-2xl object-cover max-h-64" />
+                      )}
+                    </div>
+                  ) : submission.submission.mediaUrl?.startsWith("pending-review://") ? (
+                    <div className="mt-4 rounded-2xl border border-border/50 bg-muted/10 p-4 text-sm text-muted-foreground">
+                      <div className="font-semibold text-foreground">Media unavailable</div>
+                      <div className="mt-2">This submission has no stored media file, so review it manually or ask the user to resubmit.</div>
+                    </div>
+                  ) : null}
+                </div>
+              ))}
             </div>
           </motion.div>
         )}

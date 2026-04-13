@@ -94,6 +94,16 @@ export default function Dashboard() {
   const { data: invitations, isLoading: invitationsLoading } = trpc.team.myInvitations.useQuery(undefined, {
     enabled: isAuthenticated,
   });
+  const { data: dailyChallenges, isLoading: dailyLoading } = trpc.daily.myStatus.useQuery(undefined, {
+    enabled: isAuthenticated,
+  });
+  const completeDailyChallenge = trpc.daily.complete.useMutation({
+    onSuccess: async () => {
+      await utils.daily.myStatus.invalidate();
+      await utils.user.profile.invalidate();
+      await utils.unlockables.myUnlockables.invalidate();
+    },
+  });
   const respondToInvitation = trpc.team.respondToInvitation.useMutation();
   const [respondingInvitationId, setRespondingInvitationId] = useState<number | null>(null);
 
@@ -249,6 +259,78 @@ export default function Dashboard() {
               <div className="text-xs text-muted-foreground tracking-widest">{stat.label}</div>
             </motion.div>
           ))}
+        </motion.div>
+
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.23 }}
+          className="game-card p-6 mb-8"
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <h2 className="text-xl font-black tracking-wider">Unlockables</h2>
+              <p className="text-sm text-muted-foreground">
+                Track badges, titles, and rewards you can earn by completing quests.
+              </p>
+            </div>
+            <Link href="/unlockables" className="btn-game px-4 py-2 text-xs">
+              VIEW UNLOCKABLES
+            </Link>
+          </div>
+        </motion.div>
+
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.24 }}
+          className="game-card p-6 mb-8"
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
+            <div>
+              <h2 className="text-xl font-black tracking-wider">Daily Challenge</h2>
+              <p className="text-sm text-muted-foreground">
+                Stay on your streak by finishing a daily challenge.
+              </p>
+            </div>
+            <div className="text-xs uppercase tracking-[0.28em] text-muted-foreground font-semibold">
+              {dailyChallenges?.[0]?.streakCount ? `${dailyChallenges[0].streakCount}-day streak` : "No streak yet"}
+            </div>
+          </div>
+
+          {dailyLoading ? (
+            <div className="space-y-2">
+              <div className="h-4 rounded bg-muted animate-pulse" />
+              <div className="h-4 rounded bg-muted animate-pulse w-3/4" />
+            </div>
+          ) : !dailyChallenges?.length ? (
+            <div className="text-sm text-muted-foreground">No daily challenges are active right now.</div>
+          ) : (
+            <div>
+              <div className="mb-4">
+                <div className="text-lg font-semibold">{dailyChallenges[0].challenge.title}</div>
+                <div className="text-sm text-muted-foreground mt-1">{dailyChallenges[0].challenge.description}</div>
+              </div>
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div className="text-sm text-muted-foreground">
+                  Progress: {dailyChallenges[0].progress} / {dailyChallenges[0].challenge.target}
+                </div>
+                <button
+                  className="btn-game px-4 py-2 text-xs"
+                  disabled={dailyChallenges[0].completedToday || completeDailyChallenge.status === "pending"}
+                  onClick={async () => {
+                    if (!dailyChallenges[0]) return;
+                    await completeDailyChallenge.mutateAsync({ challengeId: dailyChallenges[0].challenge.id });
+                  }}
+                >
+                  {dailyChallenges[0].completedToday ? "Completed Today" : "Complete Challenge"}
+                </button>
+              </div>
+              {dailyChallenges[0].completedToday && (
+                <div className="mt-3 text-xs text-green-400">Keep your streak alive by returning tomorrow.</div>
+              )}
+            </div>
+          )}
         </motion.div>
 
         {/* Completed Quests */}

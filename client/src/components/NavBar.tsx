@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   Bell,
   ChevronRight,
+  Check,
   Compass,
   Crown,
   LogIn,
@@ -151,6 +152,7 @@ export default function NavBar() {
     ...(isAuthenticated ? [{ href: "/dashboard", label: "DASHBOARD", icon: <User size={15} /> }] : []),
     ...(isAuthenticated && user?.role === "admin" ? [
       { href: "/admin/proposals", label: "PROPOSALS", icon: <ClipboardList size={15} /> },
+      { href: "/admin/reviews", label: "REVIEWS", icon: <Check size={15} /> },
       { href: "/admin/users", label: "ADMINS", icon: <Shield size={15} /> },
     ] : []),
   ];

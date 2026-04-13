@@ -10,7 +10,9 @@ import QuestDetail from "./pages/QuestDetail";
 import Dashboard from "./pages/Dashboard";
 import Leaderboard from "./pages/Leaderboard";
 import CreateQuest from "./pages/CreateQuest";
+import Unlockables from "./pages/Unlockables";
 import AdminProposals from "./pages/AdminProposals";
+import AdminReviews from "./pages/AdminReviews";
 import AdminUsers from "./pages/AdminUsers";
 import Login from "./pages/Login";
 import VerifyEmail from "./pages/VerifyEmail";
@@ -32,9 +34,11 @@ function Router() {
         <Route path="/quests" component={QuestFeed} />
         <Route path="/quests/:id" component={QuestDetail} />
         <Route path="/dashboard" component={Dashboard} />
+        <Route path="/unlockables" component={Unlockables} />
         <Route path="/leaderboard" component={Leaderboard} />
         <Route path="/create-quest" component={CreateQuest} />
         <Route path="/admin/proposals" component={AdminProposals} />
+        <Route path="/admin/reviews" component={AdminReviews} />
         <Route path="/admin/users" component={AdminUsers} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />

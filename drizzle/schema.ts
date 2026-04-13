@@ -78,7 +78,7 @@ export type InsertSubmission = typeof submissions.$inferInsert;
 export const notifications = mysqlTable("notifications", {
   id: int("id").autoincrement().primaryKey(),
   userId: int("userId").notNull(),
-  type: mysqlEnum("type", ["xp_gained", "level_up", "quest_completed", "submission_verified", "submission_rejected", "milestone"]).notNull(),
+  type: mysqlEnum("type", ["xp_gained", "level_up", "quest_completed", "submission_verified", "submission_rejected", "milestone", "unlockable_earned"]).notNull(),
   title: varchar("title", { length: 255 }).notNull(),
   message: text("message").notNull(),
   read: boolean("read").default(false).notNull(),
@@ -146,6 +146,59 @@ export const questTeamInvitations = mysqlTable("questTeamInvitations", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
+
+export const unlockables = mysqlTable("unlockables", {
+  id: int("id").autoincrement().primaryKey(),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description").notNull(),
+  category: mysqlEnum("category", ["badge", "cosmetic", "title", "boost"]).notNull(),
+  criteria: text("criteria").notNull(),
+  imageUrl: text("imageUrl"),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export const userUnlockables = mysqlTable("userUnlockables", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  unlockableId: int("unlockableId").notNull(),
+  earnedAt: timestamp("earnedAt").defaultNow().notNull(),
+  metadata: text("metadata"),
+});
+
+export const dailyChallenges = mysqlTable("dailyChallenges", {
+  id: int("id").autoincrement().primaryKey(),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description").notNull(),
+  challengeType: mysqlEnum("challengeType", ["complete_quest", "legendary_quest", "submit_media", "team_quest", "level_up"]).notNull(),
+  target: int("target").default(1).notNull(),
+  rewardXp: int("rewardXp").default(50).notNull(),
+  active: boolean("active").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export const userDailyChallenges = mysqlTable("userDailyChallenges", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  challengeId: int("challengeId").notNull(),
+  progress: int("progress").default(0).notNull(),
+  streakCount: int("streakCount").default(0).notNull(),
+  lastCompletedAt: timestamp("lastCompletedAt"),
+  completedAt: timestamp("completedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Unlockable = typeof unlockables.$inferSelect;
+export type InsertUnlockable = typeof unlockables.$inferInsert;
+export type UserUnlockable = typeof userUnlockables.$inferSelect;
+export type InsertUserUnlockable = typeof userUnlockables.$inferInsert;
+export type DailyChallenge = typeof dailyChallenges.$inferSelect;
+export type InsertDailyChallenge = typeof dailyChallenges.$inferInsert;
+export type UserDailyChallenge = typeof userDailyChallenges.$inferSelect;
+export type InsertUserDailyChallenge = typeof userDailyChallenges.$inferInsert;
 
 export type QuestTeamInvitation = typeof questTeamInvitations.$inferSelect;
 export type InsertQuestTeamInvitation = typeof questTeamInvitations.$inferInsert;

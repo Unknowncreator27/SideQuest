@@ -28,6 +28,19 @@ import {
   getDb,
   getQuestTeamMembers,
   getAllUsers,
+  getUnlockables,
+  getUserUnlockables,
+  createUnlockables,
+  grantUnlockable,
+  getUserUnlockable,
+  getDailyChallenges,
+  getUserDailyChallenges,
+  completeDailyChallenge,
+  getUserCompletedQuestCount,
+  getUserCompletedQuestDifficultyCounts,
+  getUserCompletedQuestDifficultySet,
+  getUserCompletedLegendaryQuestCount,
+  awardDailyStreakUnlockablesForUser,
   countAdmins,
   updateUserRole,
   hasUserCompletedQuest,
@@ -41,12 +54,13 @@ import {
   updateTeamInvitationStatus,
   xpForLevel,
   xpForNextLevel,
+  getPendingSubmissions,
 } from "./db";
 import { invokeLLM } from "./_core/llm";
 import { storagePut } from "./storage";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
-import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
+import { adminProcedure, protectedProcedure, publicProcedure, router } from "./_core/trpc";
 import { eq } from "drizzle-orm";
 import { questProposals, users } from "../drizzle/schema";
 import { ENV } from "./_core/env";
@@ -79,7 +93,279 @@ function getProposalDurationMs(duration?: string | null, createdAt?: Date | stri
   return undefined;
 }
 
-// ─── Routers ─────────────────────────────────────────────────────────────────
+async function awardUnlockablesForUser(
+  userId: number,
+  quest: { id: number; difficulty: string; title: string },
+  completionCount: number,
+  newLevel: number,
+  isLegendary: boolean,
+  difficultyCounts: { easy: number; medium: number; hard: number; legendary: number }
+) {
+  const unlockables = await getUnlockables();
+  const awarded: Array<{ id: number; title: string; description: string }> = [];
+
+  for (const unlockable of unlockables) {
+    const existing = await getUserUnlockable(userId, unlockable.id);
+    if (existing) continue;
+
+    let qualifies = false;
+    const currentDifficultyCount = (difficultyCounts as any)[quest.difficulty] ?? 0;
+    const newDifficultyCount = { ...difficultyCounts, [quest.difficulty]: currentDifficultyCount + 1 };
+    const completedDifficulties = new Set(
+      Object.keys(difficultyCounts).filter((diff) => (difficultyCounts as any)[diff] > 0)
+    );
+    completedDifficulties.add(quest.difficulty);
+
+    switch (unlockable.criteria) {
+      case "first_quest_completed":
+        qualifies = completionCount === 1;
+        break;
+      case "first_medium_quest_completed":
+        qualifies = quest.difficulty === "medium" && newDifficultyCount.medium === 1;
+        break;
+      case "first_hard_quest_completed":
+        qualifies = quest.difficulty === "hard" && newDifficultyCount.hard === 1;
+        break;
+      case "quest_variety_completed":
+        qualifies = ["easy", "medium", "hard"].every((diff) => completedDifficulties.has(diff));
+        break;
+      case "five_quests_completed":
+        qualifies = completionCount >= 5;
+        break;
+      case "ten_quests_completed":
+        qualifies = completionCount >= 10;
+        break;
+      case "legendary_quest_completed":
+        qualifies = isLegendary;
+        break;
+      case "reach_level_5":
+        qualifies = newLevel >= 5;
+        break;
+      case "reach_level_10":
+        qualifies = newLevel >= 10;
+        break;
+      default:
+        break;
+    }
+
+    if (!qualifies) continue;
+
+    const unlock = await grantUnlockable(userId, unlockable.id, JSON.stringify({ questId: quest.id, level: newLevel }));
+    if (!unlock) continue;
+
+    awarded.push({
+      id: unlockable.id,
+      title: unlockable.title,
+      description: unlockable.description,
+    });
+
+    await createNotification({
+      userId,
+      type: "unlockable_earned",
+      title: `Unlockable earned: ${unlockable.title}`,
+      message: unlockable.description,
+      metadata: JSON.stringify({ unlockableId: unlockable.id, questId: quest.id }),
+    });
+  }
+
+  return awarded;
+}
+
+async function syncUnlockablesForUser(userId: number) {
+  const unlockables = await getUnlockables();
+  const completedCount = await getUserCompletedQuestCount(userId);
+  const legendaryCount = await getUserCompletedLegendaryQuestCount(userId);
+  const user = await getUserById(userId);
+  if (!user) return [];
+
+  const awarded: Array<{ id: number; title: string; description: string }> = [];
+
+  for (const unlockable of unlockables) {
+    const existing = await getUserUnlockable(userId, unlockable.id);
+    if (existing) continue;
+
+    let qualifies = false;
+    switch (unlockable.criteria) {
+      case "first_quest_completed":
+        qualifies = completedCount >= 1;
+        break;
+      case "five_quests_completed":
+        qualifies = completedCount >= 5;
+        break;
+      case "ten_quests_completed":
+        qualifies = completedCount >= 10;
+        break;
+      case "legendary_quest_completed":
+        qualifies = legendaryCount >= 1;
+        break;
+      case "reach_level_5":
+        qualifies = user.level >= 5;
+        break;
+      case "reach_level_10":
+        qualifies = user.level >= 10;
+        break;
+      default:
+        break;
+    }
+
+    if (!qualifies) continue;
+
+    const unlock = await grantUnlockable(userId, unlockable.id, JSON.stringify({ synced: true }));
+    if (!unlock) continue;
+
+    awarded.push({
+      id: unlockable.id,
+      title: unlockable.title,
+      description: unlockable.description,
+    });
+
+    await createNotification({
+      userId,
+      type: "unlockable_earned",
+      title: `Unlockable earned: ${unlockable.title}`,
+      message: unlockable.description,
+      metadata: JSON.stringify({ unlockableId: unlockable.id, synced: true }),
+    });
+  }
+
+  return awarded;
+}
+
+async function processSubmissionReview(
+  ctx: any,
+  sub: any,
+  approved: boolean,
+  reason: string,
+  confidence: number | null
+) {
+  const teamMemberIds: number[] = sub.teamMemberIds ? JSON.parse(sub.teamMemberIds) : [];
+  const questRow = await getQuestById(sub.questId);
+  if (!questRow) throw new TRPCError({ code: "NOT_FOUND", message: "Quest not found" });
+  const quest = questRow.quest;
+  const submitterId = sub.userId;
+
+  let leveledUp = false;
+  let newLevel = 1;
+  let newXp = 0;
+  let submitterXpAwarded = 0;
+  let newUnlockables: Array<{ id: number; title: string; description: string }> = [];
+
+  if (approved) {
+    await updateQuestCompletionCount(quest.id);
+
+    const allParticipantIds = Array.from(new Set([sub.userId, ...teamMemberIds]));
+
+    for (const participantId of allParticipantIds) {
+      if (await hasUserCompletedQuest(participantId, quest.id)) {
+        continue;
+      }
+
+      const previousCompletionCount = await getUserCompletedQuestCount(participantId);
+      const difficultyCounts = await getUserCompletedQuestDifficultyCounts(participantId);
+      const difficultyBonus = (() => {
+        if (quest.difficulty === "medium" && difficultyCounts.medium === 0) return 20;
+        if (quest.difficulty === "hard" && difficultyCounts.hard === 0) return 40;
+        if (quest.difficulty === "legendary" && difficultyCounts.legendary === 0) return 100;
+        return 0;
+      })();
+      const totalXpAwarded = quest.xpReward + difficultyBonus;
+      const xpResult = await addXpToUser(participantId, totalXpAwarded);
+
+      if (participantId === submitterId) {
+        leveledUp = xpResult.leveledUp;
+        newLevel = xpResult.newLevel;
+        newXp = xpResult.newXp;
+        submitterXpAwarded = totalXpAwarded;
+      }
+
+      await createNotification({
+        userId: participantId,
+        type: "submission_verified",
+        title: "Quest Completed! 🎉",
+        message: `Your submission for "${quest.title}" was verified! You earned ${totalXpAwarded} XP.`,
+        metadata: JSON.stringify({ questId: quest.id, xpAwarded: totalXpAwarded, bonusXp: difficultyBonus }),
+      });
+
+      await createNotification({
+        userId: participantId,
+        type: "xp_gained",
+        title: `+${totalXpAwarded} XP Earned`,
+        message: `You gained ${totalXpAwarded} XP for completing "${quest.title}"${difficultyBonus ? ` (+${difficultyBonus} bonus)` : ""}.`,
+        metadata: JSON.stringify({ xp: totalXpAwarded, bonusXp: difficultyBonus }),
+      });
+
+      const awardedUnlockables = await awardUnlockablesForUser(
+        participantId,
+        { id: quest.id, difficulty: quest.difficulty, title: quest.title },
+        previousCompletionCount + 1,
+        xpResult.newLevel,
+        quest.difficulty === "legendary",
+        difficultyCounts
+      );
+
+      if (participantId === submitterId && awardedUnlockables.length > 0) {
+        newUnlockables = awardedUnlockables;
+      }
+
+      if (participantId !== submitterId) {
+        await createNotification({
+          userId: participantId,
+          type: "milestone",
+          title: "Team Quest Complete!",
+          message: `Your team submission for "${quest.title}" was verified!`,
+          metadata: JSON.stringify({ questId: quest.id }),
+        });
+      }
+    }
+
+    if (leveledUp) {
+      await createNotification({
+        userId: submitterId,
+        type: "level_up",
+        title: `Level Up! You're now Level ${newLevel} 🚀`,
+        message: `Incredible! You've reached Level ${newLevel}. Keep completing quests to level up further!`,
+        metadata: JSON.stringify({ newLevel }),
+      });
+    }
+
+    if (quest.createdBy !== submitterId) {
+      const submitter = await getUserById(submitterId);
+      await createNotification({
+        userId: quest.createdBy,
+        type: "quest_completed",
+        title: "Your quest was completed!",
+        message: `${submitter?.name ?? "A player"} completed your quest "${quest.title}".`,
+        metadata: JSON.stringify({ questId: quest.id, submitterId }),
+      });
+    }
+  } else {
+    await createNotification({
+      userId: sub.userId,
+      type: "submission_rejected",
+      title: "Submission Not Verified",
+      message: `Your submission for "${quest.title}" was rejected. ${reason}`,
+      metadata: JSON.stringify({ questId: quest.id }),
+    });
+  }
+
+  await updateSubmission(sub.id, {
+    status: approved ? "approved" : "rejected",
+    aiVerified: false,
+    aiConfidence: confidence ?? undefined,
+    aiReason: reason,
+    xpAwarded: approved ? submitterXpAwarded : 0,
+  });
+
+  return {
+    xpAwarded: approved ? submitterXpAwarded : 0,
+    leveledUp,
+    newLevel,
+    newXp,
+    newUnlockables,
+  };
+}
+
+// ─── Routers ───────────────────────────────────────────────────────────────────────────────────
 
 const questRouter = router({
   list: publicProcedure
@@ -189,10 +475,9 @@ const submissionRouter = router({
         throw new TRPCError({ code: "BAD_REQUEST", message: "You already completed this quest" });
       }
 
-      // Decode base64 and upload to S3
       const buffer = Buffer.from(input.mediaBase64, "base64");
       const ext = input.fileName.split(".").pop() ?? "bin";
-      const fileKey = `submissions/user-${ctx.user.id}/quest-${input.questId}/${randomSuffix()}.${ext}`;
+      const fileKey = "submissions/user-" + ctx.user.id + "/quest-" + input.questId + "/" + randomSuffix() + "." + ext;
       const { url } = await storagePut(fileKey, buffer, input.mimeType);
 
       let teamMemberIds: number[] | undefined;
@@ -214,9 +499,68 @@ const submissionRouter = router({
         teamMemberIds,
       });
 
-      return { submissionId, mediaUrl: url };
+      return { submissionId, mediaUrl: url };  
+      
     }),
 
+    createPendingSubmission: protectedProcedure
+  .input(
+    z.object({
+      questId: z.number(),
+      mediaType: z.enum(["image", "video"]),
+      note: z.string().optional().default("Media upload skipped - awaiting admin review"),
+    })
+  )
+  .mutation(async ({ ctx, input }) => {
+    const quest = await getQuestById(input.questId);
+    if (!quest) throw new TRPCError({ code: "NOT_FOUND", message: "Quest not found" });
+    if (quest.quest.status !== "active") {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "Quest is not active" });
+    }
+
+    const alreadyDone = await hasUserCompletedQuest(ctx.user.id, input.questId);
+    if (alreadyDone) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "You already completed this quest" });
+    }
+
+    // Team check
+    let teamMemberIds: number[] | undefined;
+    if (quest.quest.requirementType === "team") {
+      const memberIds = await getQuestTeamMemberIds(quest.quest.id);
+      if (!memberIds.includes(ctx.user.id)) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Only invited team members can submit for this quest." });
+      }
+      teamMemberIds = memberIds;
+    }
+
+    const placeholderUrl = `pending-review://quest-${input.questId}/user-${ctx.user.id}/${Date.now()}`;
+    const placeholderKey = `pending/${ctx.user.id}/quest-${input.questId}/${randomSuffix()}`;
+
+    const submissionId = await createSubmission({
+      questId: input.questId,
+      userId: ctx.user.id,
+      mediaUrl: placeholderUrl,
+      mediaType: input.mediaType,
+      mediaKey: placeholderKey,
+      status: "pending",
+      teamMemberIds,
+      // note: input.note,        // Remove this line if your createSubmission doesn't support 'note'
+    });
+
+    // Notify admin/owner
+    await createNotification({
+      userId: 1,
+      type: "milestone",                    // Better type for admin alert
+      title: "New Pending Submission (No Media)",
+      message: `User submitted for quest ${input.questId} without media (storage issue). Please review manually.`,
+      metadata: JSON.stringify({ 
+        questId: input.questId,
+        note: input.note 
+      }),
+    });
+
+    return { submissionId };
+  }),
   // AI verification of a submission
   verify: protectedProcedure
     .input(z.object({ submissionId: z.number() }))
@@ -234,17 +578,18 @@ const submissionRouter = router({
       if (!questRow) throw new TRPCError({ code: "NOT_FOUND", message: "Quest not found" });
       const quest = questRow.quest;
 
-      // Build LLM message with vision
       const isVideo = sub.mediaType === "video";
-      const systemPrompt = `You are an AI quest verification system for a gamified side quest platform. 
-Your job is to verify whether a user has genuinely completed a quest based on their submitted media.
-Be fair but strict. Look for clear evidence that the quest was actually completed.
-Always respond with valid JSON matching the schema provided.`;
+      const systemPrompt = "You are an AI quest verification system for a gamified side quest platform. Your job is to verify whether a user has genuinely completed a quest based on their submitted media. Be fair but strict. Look for clear evidence that the quest was actually completed. Always respond with valid JSON matching the schema provided.";
 
       const userContent: Array<{ type: string; text?: string; image_url?: { url: string; detail: string }; file_url?: { url: string; mime_type: string } }> = [
         {
           type: "text",
-          text: `Quest Title: "${quest.title}"\nQuest Description: "${quest.description}"\nDifficulty: ${quest.difficulty}\n\nPlease analyze the submitted ${isVideo ? "video" : "image"} and determine if it genuinely proves the user completed this quest.`,
+          text:
+            "Quest Title: \"" + quest.title + "\"\n" +
+            "Quest Description: \"" + quest.description + "\"\n" +
+            "Difficulty: " + quest.difficulty + "\n\n" +
+            "Please analyze the submitted " + (isVideo ? "video" : "image") +
+            " and determine if it genuinely proves the user completed this quest.",
         },
       ];
 
@@ -295,17 +640,12 @@ Always respond with valid JSON matching the schema provided.`;
 
       const approved = aiResult.verified && aiResult.confidence >= 0.6;
 
-      await updateSubmission(input.submissionId, {
-        status: approved ? "approved" : "rejected",
-        aiVerified: aiResult.verified,
-        aiConfidence: aiResult.confidence,
-        aiReason: aiResult.reason,
-        xpAwarded: approved ? quest.xpReward : 0,
-      });
-
       let leveledUp = false;
       let newLevel = 1;
       let newXp = 0;
+      let submitterXpAwarded = 0;
+      let newUnlockables: Array<{ id: number; title: string; description: string }> = [];
+      const submitterId = sub.userId;
 
       if (approved) {
         await updateQuestCompletionCount(quest.id);
@@ -317,36 +657,59 @@ Always respond with valid JSON matching the schema provided.`;
             continue;
           }
 
-          const xpResult = await addXpToUser(participantId, quest.xpReward);
+          const previousCompletionCount = await getUserCompletedQuestCount(participantId);
+          const difficultyCounts = await getUserCompletedQuestDifficultyCounts(participantId);
+          const difficultyBonus = (() => {
+            if (quest.difficulty === "medium" && difficultyCounts.medium === 0) return 20;
+            if (quest.difficulty === "hard" && difficultyCounts.hard === 0) return 40;
+            if (quest.difficulty === "legendary" && difficultyCounts.legendary === 0) return 100;
+            return 0;
+          })();
+          const totalXpAwarded = quest.xpReward + difficultyBonus;
+          const xpResult = await addXpToUser(participantId, totalXpAwarded);
 
-          if (participantId === ctx.user.id) {
+          if (participantId === submitterId) {
             leveledUp = xpResult.leveledUp;
             newLevel = xpResult.newLevel;
             newXp = xpResult.newXp;
+            submitterXpAwarded = totalXpAwarded;
           }
 
           await createNotification({
             userId: participantId,
             type: "submission_verified",
             title: "Quest Completed! 🎉",
-            message: `Your submission for "${quest.title}" was verified! You earned ${quest.xpReward} XP.`,
-            metadata: JSON.stringify({ questId: quest.id, xpAwarded: quest.xpReward }),
+            message: "Your submission for \"" + quest.title + "\" was verified! You earned " + totalXpAwarded + " XP.",
+            metadata: JSON.stringify({ questId: quest.id, xpAwarded: totalXpAwarded, bonusXp: difficultyBonus }),
           });
 
           await createNotification({
             userId: participantId,
             type: "xp_gained",
-            title: `+${quest.xpReward} XP Earned`,
-            message: `You gained ${quest.xpReward} XP for completing "${quest.title}".`,
-            metadata: JSON.stringify({ xp: quest.xpReward }),
+            title: "+" + totalXpAwarded + " XP Earned",
+            message: "You gained " + totalXpAwarded + " XP for completing \"" + quest.title + "\"" + (difficultyBonus ? " (+" + difficultyBonus + " bonus)" : "") + ".",
+            metadata: JSON.stringify({ xp: totalXpAwarded, bonusXp: difficultyBonus }),
           });
 
-          if (participantId !== ctx.user.id) {
+          const awardedUnlockables = await awardUnlockablesForUser(
+            participantId,
+            { id: quest.id, difficulty: quest.difficulty, title: quest.title },
+            previousCompletionCount + 1,
+            xpResult.newLevel,
+            quest.difficulty === "legendary",
+            difficultyCounts
+          );
+
+          if (participantId === submitterId && awardedUnlockables.length > 0) {
+            newUnlockables = awardedUnlockables;
+          }
+
+          if (participantId !== submitterId) {
             await createNotification({
               userId: participantId,
               type: "milestone",
               title: "Team Quest Complete!",
-              message: `Your team submission for "${quest.title}" was verified!`,
+              message: "Your team submission for \"" + quest.title + "\" was verified!",
               metadata: JSON.stringify({ questId: quest.id }),
             });
           }
@@ -354,45 +717,80 @@ Always respond with valid JSON matching the schema provided.`;
 
         if (leveledUp) {
           await createNotification({
-            userId: ctx.user.id,
+            userId: submitterId,
             type: "level_up",
-            title: `Level Up! You're now Level ${newLevel} 🚀`,
-            message: `Incredible! You've reached Level ${newLevel}. Keep completing quests to level up further!`,
+            title: "Level Up! You're now Level " + newLevel + " 🚀",
+            message: "Incredible! You've reached Level " + newLevel + ". Keep completing quests to level up further!",
             metadata: JSON.stringify({ newLevel }),
           });
         }
 
-        // Notify quest creator if different user
-        if (quest.createdBy !== ctx.user.id) {
-          const submitter = await getUserById(ctx.user.id);
+        if (quest.createdBy !== submitterId) {
+          const submitter = await getUserById(submitterId);
           await createNotification({
             userId: quest.createdBy,
             type: "quest_completed",
             title: "Your quest was completed!",
-            message: `${submitter?.name ?? "A player"} completed your quest "${quest.title}".`,
-            metadata: JSON.stringify({ questId: quest.id, submitterId: ctx.user.id }),
+            message: (submitter?.name ?? "A player") + " completed your quest \"" + quest.title + "\".",
+            metadata: JSON.stringify({ questId: quest.id, submitterId }),
           });
         }
       } else {
         await createNotification({
-          userId: ctx.user.id,
+          userId: submitterId,
           type: "submission_rejected",
           title: "Submission Not Verified",
-          message: `Your submission for "${quest.title}" was not verified. ${aiResult.reason}`,
+          message: "Your submission for \"" + quest.title + "\" was not verified. " + aiResult.reason,
           metadata: JSON.stringify({ questId: quest.id }),
         });
       }
+
+      await updateSubmission(input.submissionId, {
+        status: approved ? "approved" : "rejected",
+        aiVerified: aiResult.verified,
+        aiConfidence: aiResult.confidence,
+        aiReason: aiResult.reason,
+        xpAwarded: approved ? submitterXpAwarded : 0,
+      });
 
       return {
         approved,
         confidence: aiResult.confidence,
         reason: aiResult.reason,
-        xpAwarded: approved ? quest.xpReward : 0,
+        xpAwarded: approved ? submitterXpAwarded : 0,
         leveledUp,
         newLevel,
         newXp,
+        newUnlockables,
       };
     }),
+
+  review: adminProcedure
+    .input(
+      z.object({
+        submissionId: z.number(),
+        approved: z.boolean(),
+        reason: z.string().min(1).optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const sub = await getSubmissionById(input.submissionId);
+      if (!sub) throw new TRPCError({ code: "NOT_FOUND" });
+      if (sub.status !== "pending") {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Submission already processed" });
+      }
+      return processSubmissionReview(
+        ctx,
+        sub,
+        input.approved,
+        input.reason ?? (input.approved ? "Approved by admin" : "Rejected by admin"),
+        input.approved ? 1 : 0
+      );
+    }),
+
+  pending: adminProcedure.query(async () => {
+    return getPendingSubmissions();
+  }),
 
   mySubmissions: protectedProcedure.query(async ({ ctx }) => {
     return getSubmissionsByUser(ctx.user.id);
@@ -423,6 +821,72 @@ const notificationRouter = router({
     await markNotificationsRead(ctx.user.id);
     return { success: true };
   }),
+});
+
+const unlockablesRouter = router({
+  list: publicProcedure.query(async () => {
+    return getUnlockables();
+  }),
+
+  myUnlockables: protectedProcedure.query(async ({ ctx }) => {
+    await syncUnlockablesForUser(ctx.user.id);
+    return getUserUnlockables(ctx.user.id);
+  }),
+
+  create: protectedProcedure
+    .input(
+      z.object({
+        title: z.string().min(1),
+        description: z.string().min(1),
+        category: z.enum(["badge", "cosmetic", "title", "boost"]),
+        criteria: z.string().min(1),
+        imageUrl: z.string().optional(),
+        isActive: z.boolean().default(true),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (ctx.user.role !== "admin") {
+        throw new TRPCError({ code: "FORBIDDEN" });
+      }
+      const id = await createUnlockables(input);
+      return { id };
+    }),
+
+  grant: protectedProcedure
+    .input(
+      z.object({
+        userId: z.number(),
+        unlockableId: z.number(),
+        metadata: z.string().optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (ctx.user.role !== "admin") {
+        throw new TRPCError({ code: "FORBIDDEN" });
+      }
+      const existing = await getUserUnlockable(input.userId, input.unlockableId);
+      if (existing) {
+        return { success: false, message: "Unlockable already granted" };
+      }
+      const unlock = await grantUnlockable(input.userId, input.unlockableId, input.metadata);
+      return { success: !!unlock, unlock };
+    }),
+});
+
+const dailyRouter = router({
+  list: publicProcedure.query(async () => {
+    return getDailyChallenges();
+  }),
+
+  myStatus: protectedProcedure.query(async ({ ctx }) => {
+    return getUserDailyChallenges(ctx.user.id);
+  }),
+
+  complete: protectedProcedure
+    .input(z.object({ challengeId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      return completeDailyChallenge(ctx.user.id, input.challengeId);
+    }),
 });
 
 const userRouter = router({
@@ -869,6 +1333,7 @@ submit: protectedProcedure
 
 export const appRouter = router({
   system: systemRouter,
+  unlockables: unlockablesRouter,
   auth: router({
     me: publicProcedure.query((opts) => opts.ctx.user),
     logout: publicProcedure.mutation(({ ctx }) => {
@@ -954,6 +1419,7 @@ export const appRouter = router({
   quest: questRouter,
   submission: submissionRouter,
   notification: notificationRouter,
+  daily: dailyRouter,
   user: userRouter,
   proposal: proposalRouter,
   team: teamRouter,

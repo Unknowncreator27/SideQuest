@@ -8,8 +8,12 @@ import {
   InsertQuestProposal,
   InsertSubmission,
   InsertTeamMember,
+  InsertUnlockable,
   InsertUser,
   InsertQuestTeamInvitation,
+  InsertUserUnlockable,
+  InsertDailyChallenge,
+  InsertUserDailyChallenge,
   notifications,
   Quest,
   questProposals,
@@ -17,6 +21,10 @@ import {
   quests,
   submissions,
   teamMembers,
+  unlockables,
+  userUnlockables,
+  dailyChallenges,
+  userDailyChallenges,
   users,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
@@ -179,6 +187,525 @@ export async function getLeaderboard(limit = 20) {
     .from(users)
     .orderBy(desc(users.xp))
     .limit(limit);
+}
+
+// ─── Create Unlockables ─────────────────────────────────────────────────────────────
+export async function createUnlockables(unlockable: InsertUnlockable) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+
+  const result = await db.insert(unlockables).values(unlockable);
+  return (result[0] as { insertId: number }).insertId;
+}
+
+export async function getPendingSubmissions() {
+  const db = await getDb();
+  if (!db) return [];
+
+  return db
+    .select({
+      submission: submissions,
+      user: {
+        id: users.id,
+        name: users.name,
+        avatarUrl: users.avatarUrl,
+      },
+      quest: {
+        id: quests.id,
+        title: quests.title,
+        xpReward: quests.xpReward,
+        difficulty: quests.difficulty,
+      },
+    })
+    .from(submissions)
+    .leftJoin(users, eq(submissions.userId, users.id))
+    .leftJoin(quests, eq(submissions.questId, quests.id))
+    .where(eq(submissions.status, "pending"))
+    .orderBy(desc(submissions.createdAt));
+}
+
+export async function getUnlockables() {
+  const db = await getDb();
+  if (!db) return [];
+
+  return db
+    .select({
+      id: unlockables.id,
+      title: unlockables.title,
+      description: unlockables.description,
+      category: unlockables.category,
+      criteria: unlockables.criteria,
+      imageUrl: unlockables.imageUrl,
+      isActive: unlockables.isActive,
+      createdAt: unlockables.createdAt,
+      updatedAt: unlockables.updatedAt,
+    })
+    .from(unlockables)
+    .where(eq(unlockables.isActive, true))
+    .orderBy(desc(unlockables.createdAt));
+}
+
+export async function getUserUnlockables(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  return db
+    .select({
+      id: userUnlockables.id,
+      userId: userUnlockables.userId,
+      unlockableId: userUnlockables.unlockableId,
+      earnedAt: userUnlockables.earnedAt,
+      metadata: userUnlockables.metadata,
+      unlockable: {
+        id: unlockables.id,
+        title: unlockables.title,
+        description: unlockables.description,
+        category: unlockables.category,
+        criteria: unlockables.criteria,
+        imageUrl: unlockables.imageUrl,
+      },
+    })
+    .from(userUnlockables)
+    .innerJoin(unlockables, eq(userUnlockables.unlockableId, unlockables.id))
+    .where(eq(userUnlockables.userId, userId))
+    .orderBy(desc(userUnlockables.earnedAt));
+}
+
+export async function awardLevelUnlockablesForUser(
+  userId: number,
+  newLevel: number,
+  metadata?: Record<string, unknown>
+) {
+  const unlockablesList = await getUnlockables();
+  const awarded: Array<{ id: number; title: string; description: string }> = [];
+
+  for (const unlockable of unlockablesList) {
+    const existing = await getUserUnlockable(userId, unlockable.id);
+    if (existing) continue;
+
+    let qualifies = false;
+    if (unlockable.criteria === "reach_level_5") {
+      qualifies = newLevel >= 5;
+    } else if (unlockable.criteria === "reach_level_10") {
+      qualifies = newLevel >= 10;
+    }
+
+    if (!qualifies) continue;
+
+    const unlock = await grantUnlockable(
+      userId,
+      unlockable.id,
+      metadata ? JSON.stringify(metadata) : undefined
+    );
+    if (!unlock) continue;
+
+    awarded.push({
+      id: unlockable.id,
+      title: unlockable.title,
+      description: unlockable.description,
+    });
+
+    await createNotification({
+      userId,
+      type: "unlockable_earned",
+      title: `Unlockable earned: ${unlockable.title}`,
+      message: unlockable.description,
+      metadata: JSON.stringify({ unlockableId: unlockable.id, ...metadata }),
+    });
+  }
+
+  return awarded;
+}
+
+function getDateString(date?: Date | string | null) {
+  if (!date) return null;
+  const d = new Date(date);
+  return d.toISOString().slice(0, 10);
+}
+
+export async function getDailyChallenges() {
+  const db = await getDb();
+  if (!db) return [];
+
+  return db
+    .select({
+      id: dailyChallenges.id,
+      title: dailyChallenges.title,
+      description: dailyChallenges.description,
+      challengeType: dailyChallenges.challengeType,
+      target: dailyChallenges.target,
+      rewardXp: dailyChallenges.rewardXp,
+      active: dailyChallenges.active,
+      createdAt: dailyChallenges.createdAt,
+      updatedAt: dailyChallenges.updatedAt,
+    })
+    .from(dailyChallenges)
+    .where(eq(dailyChallenges.active, true))
+    .orderBy(desc(dailyChallenges.createdAt));
+}
+
+export async function getUserDailyChallenges(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const today = getDateString(new Date());
+
+  const rows = await db
+    .select({
+      challenge: dailyChallenges,
+      status: {
+        id: userDailyChallenges.id,
+        progress: userDailyChallenges.progress,
+        streakCount: userDailyChallenges.streakCount,
+        lastCompletedAt: userDailyChallenges.lastCompletedAt,
+        completedAt: userDailyChallenges.completedAt,
+      },
+    })
+    .from(dailyChallenges)
+    .leftJoin(
+      userDailyChallenges,
+      and(
+        eq(userDailyChallenges.challengeId, dailyChallenges.id),
+        eq(userDailyChallenges.userId, userId)
+      )
+    )
+    .where(eq(dailyChallenges.active, true));
+
+  return rows.map((row) => {
+    const status = row.status ?? {
+      id: null,
+      progress: 0,
+      streakCount: 0,
+      lastCompletedAt: null,
+      completedAt: null,
+    };
+    const lastDate = getDateString(status.lastCompletedAt);
+    return {
+      challenge: row.challenge,
+      progress: status.progress ?? 0,
+      streakCount: status.streakCount ?? 0,
+      lastCompletedAt: status.lastCompletedAt ?? null,
+      completedAt: status.completedAt ?? null,
+      completedToday: lastDate === today,
+    };
+  });
+}
+
+export async function getUserDailyChallenge(userId: number, challengeId: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const rows = await db
+    .select()
+    .from(userDailyChallenges)
+    .where(
+      and(
+        eq(userDailyChallenges.userId, userId),
+        eq(userDailyChallenges.challengeId, challengeId)
+      )
+    )
+    .limit(1);
+
+  return rows[0] || null;
+}
+
+export async function getDailyChallengeById(challengeId: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const rows = await db
+    .select()
+    .from(dailyChallenges)
+    .where(eq(dailyChallenges.id, challengeId))
+    .limit(1);
+
+  return rows[0] || null;
+}
+
+export async function completeDailyChallenge(userId: number, challengeId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+
+  const challenge = await getDailyChallengeById(challengeId);
+  if (!challenge) throw new Error("Daily challenge not found");
+  if (!challenge.active) throw new Error("Daily challenge is not active");
+
+  const now = new Date();
+  const today = getDateString(now);
+  const yesterday = getDateString(new Date(now.getTime() - 24 * 60 * 60 * 1000));
+
+  const existing = await getUserDailyChallenge(userId, challengeId);
+  const lastCompletedDate = getDateString(existing?.lastCompletedAt);
+  const alreadyCompleted = lastCompletedDate === today;
+  if (alreadyCompleted) {
+    return {
+      success: false,
+      alreadyCompleted: true,
+      streakCount: existing?.streakCount ?? 0,
+      totalXp: 0,
+    };
+  }
+
+  const previousStreak = lastCompletedDate === yesterday ? existing?.streakCount ?? 0 : 0;
+  const streakCount = previousStreak + 1;
+  const streakBonus = streakCount > 1 ? Math.min(10 * streakCount, 50) : 0;
+  const totalXp = challenge.rewardXp + streakBonus;
+
+  if (existing) {
+    await db
+      .update(userDailyChallenges)
+      .set({
+        progress: challenge.target,
+        streakCount,
+        lastCompletedAt: now,
+        completedAt: now,
+        updatedAt: new Date(),
+      })
+      .where(eq(userDailyChallenges.id, existing.id));
+  } else {
+    await db.insert(userDailyChallenges).values({
+      userId,
+      challengeId,
+      progress: challenge.target,
+      streakCount,
+      lastCompletedAt: now,
+      completedAt: now,
+    });
+  }
+
+  const xpResult = await addXpToUser(userId, totalXp);
+  const newUnlockables = await awardLevelUnlockablesForUser(userId, xpResult.newLevel, { challengeId });
+
+  await createNotification({
+    userId,
+    type: "xp_gained",
+    title: `Daily challenge completed! +${totalXp} XP`,
+    message: `${challenge.title} complete. Streak: ${streakCount} day${streakCount !== 1 ? "s" : ""}.`,
+    metadata: JSON.stringify({ challengeId, streakCount, streakBonus }),
+  });
+
+  if (streakCount > 1) {
+    await createNotification({
+      userId,
+      type: "level_up",
+      title: `Streak bonus! ${streakBonus} XP`,
+      message: `Your ${streakCount}-day streak is active. Keep it going!`,
+      metadata: JSON.stringify({ streakCount, streakBonus }),
+    });
+  }
+
+  return {
+    success: true,
+    alreadyCompleted: false,
+    streakCount,
+    totalXp,
+    streakBonus,
+    newUnlockables,
+  };
+}
+
+// export async function createUnlockables(unlockable: InsertUnlockable) {
+//   const db = await getDb();
+//   if (!db) throw new Error("DB unavailable");
+
+//   const result = await db.insert(unlockables).values(unlockable);
+//   return (result[0] as { insertId: number }).insertId;
+// }
+
+export async function grantUnlockable(
+  userId: number,
+  unlockableId: number,
+  metadata?: string
+) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const existing = await db
+    .select()
+    .from(userUnlockables)
+    .where(
+      and(
+        eq(userUnlockables.userId, userId),
+        eq(userUnlockables.unlockableId, unlockableId)
+      )
+    )
+    .limit(1);
+
+  if (existing.length > 0) {
+    return existing[0];
+  }
+
+  const result = await db.insert(userUnlockables).values({
+    userId,
+    unlockableId,
+    metadata: metadata || undefined,
+  });
+
+  const insertId = (result[0] as { insertId: number }).insertId;
+  const rows = await db
+    .select({
+      id: userUnlockables.id,
+      userId: userUnlockables.userId,
+      unlockableId: userUnlockables.unlockableId,
+      earnedAt: userUnlockables.earnedAt,
+      metadata: userUnlockables.metadata,
+    })
+    .from(userUnlockables)
+    .where(eq(userUnlockables.id, insertId))
+    .limit(1);
+
+  return rows[0] || null;
+}
+
+export async function getUserUnlockable(userId: number, unlockableId: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const rows = await db
+    .select()
+    .from(userUnlockables)
+    .where(
+      and(
+        eq(userUnlockables.userId, userId),
+        eq(userUnlockables.unlockableId, unlockableId)
+      )
+    )
+    .limit(1);
+
+  return rows[0] || null;
+}
+
+export async function getUserCompletedQuestCount(userId: number) {
+  const db = await getDb();
+  if (!db) return 0;
+
+  const result = await db
+    .select({ count: sql`COUNT(*)` })
+    .from(submissions)
+    .where(
+      and(
+        eq(submissions.status, "approved"),
+        or(
+          eq(submissions.userId, userId),
+          sql`JSON_CONTAINS(${submissions.teamMemberIds}, JSON_QUOTE(${userId}))`
+        )
+      )
+    )
+    .limit(1);
+
+  return Number(result[0]?.count ?? 0);
+}
+
+export async function getUserCompletedQuestDifficultyCounts(userId: number) {
+  const db = await getDb();
+  if (!db) return { easy: 0, medium: 0, hard: 0, legendary: 0 };
+
+  const rows = await db
+    .select({ difficulty: quests.difficulty, count: sql`COUNT(*)` })
+    .from(submissions)
+    .leftJoin(quests, eq(submissions.questId, quests.id))
+    .where(
+      and(
+        eq(submissions.status, "approved"),
+        or(
+          eq(submissions.userId, userId),
+          sql`JSON_CONTAINS(${submissions.teamMemberIds}, JSON_QUOTE(${userId}))`
+        )
+      )
+    )
+    .groupBy(quests.difficulty);
+
+  const counts = { easy: 0, medium: 0, hard: 0, legendary: 0 };
+  for (const row of rows) {
+    const difficulty = row.difficulty;
+    if (difficulty && difficulty in counts) {
+      counts[difficulty as keyof typeof counts] = Number((row as any).count ?? 0);
+    }
+  }
+  return counts;
+}
+
+export async function getUserCompletedQuestDifficultySet(userId: number) {
+  const db = await getDb();
+  if (!db) return new Set<string>();
+
+  const rows = await db
+    .select({ difficulty: quests.difficulty })
+    .from(submissions)
+    .leftJoin(quests, eq(submissions.questId, quests.id))
+    .where(
+      and(
+        eq(submissions.status, "approved"),
+        or(
+          eq(submissions.userId, userId),
+          sql`JSON_CONTAINS(${submissions.teamMemberIds}, JSON_QUOTE(${userId}))`
+        )
+      )
+    )
+    .groupBy(quests.difficulty);
+
+  return new Set(rows.map((row) => row.difficulty));
+}
+
+export async function awardDailyStreakUnlockablesForUser(userId: number, streakCount: number) {
+  const unlockablesList = await getUnlockables();
+  const awarded: Array<{ id: number; title: string; description: string }> = [];
+
+  for (const unlockable of unlockablesList) {
+    const existing = await getUserUnlockable(userId, unlockable.id);
+    if (existing) continue;
+
+    let qualifies = false;
+    if (unlockable.criteria === "daily_streak_3") {
+      qualifies = streakCount >= 3;
+    } else if (unlockable.criteria === "daily_streak_7") {
+      qualifies = streakCount >= 7;
+    }
+
+    if (!qualifies) continue;
+
+    const unlock = await grantUnlockable(userId, unlockable.id, JSON.stringify({ streakCount }));
+    if (!unlock) continue;
+
+    awarded.push({
+      id: unlockable.id,
+      title: unlockable.title,
+      description: unlockable.description,
+    });
+
+    await createNotification({
+      userId,
+      type: "unlockable_earned",
+      title: `Unlockable earned: ${unlockable.title}`,
+      message: unlockable.description,
+      metadata: JSON.stringify({ unlockableId: unlockable.id, streakCount }),
+    });
+  }
+
+  return awarded;
+}
+
+export async function getUserCompletedLegendaryQuestCount(userId: number) {
+  const db = await getDb();
+  if (!db) return 0;
+
+  const result = await db
+    .select({ count: sql`COUNT(*)` })
+    .from(submissions)
+    .leftJoin(quests, eq(submissions.questId, quests.id))
+    .where(
+      and(
+        eq(submissions.status, "approved"),
+        eq(quests.difficulty, "legendary"),
+        or(
+          eq(submissions.userId, userId),
+          sql`JSON_CONTAINS(${submissions.teamMemberIds}, JSON_QUOTE(${userId}))`
+        )
+      )
+    )
+    .limit(1);
+
+  return Number(result[0]?.count ?? 0);
 }
 
 export async function updateUser(id: number, updates: Partial<InsertUser>): Promise<boolean> {

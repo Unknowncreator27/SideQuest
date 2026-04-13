@@ -9,7 +9,7 @@ import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { getDb } from "../db";
-import { users, quests } from "../../drizzle/schema";
+import { users, quests, unlockables, dailyChallenges } from "../../drizzle/schema";
 import { eq } from "drizzle-orm";
 import bcrypt from "bcrypt";
 import { ENV } from "./env";
@@ -146,10 +146,102 @@ async function seedDefaultQuestsIfEmpty() {
   }
 }
 
+async function seedDefaultUnlockablesIfEmpty() {
+  try {
+    const db = await getDb();
+    if (!db) return;
+    const existing = await db.select().from(unlockables).limit(1);
+    if (existing.length > 0) return;
+
+    const DEFAULT_UNLOCKABLES = [
+      {
+        title: "Rookie Adventurer",
+        description: "Complete your first quest.",
+        category: "badge" as const,
+        criteria: "first_quest_completed",
+        imageUrl: null,
+      },
+      {
+        title: "Legend Seeker",
+        description: "Complete your first legendary quest.",
+        category: "cosmetic" as const,
+        criteria: "legendary_quest_completed",
+        imageUrl: null,
+      },
+      {
+        title: "Five Quests Master",
+        description: "Complete five quests.",
+        category: "title" as const,
+        criteria: "five_quests_completed",
+        imageUrl: null,
+      },
+      {
+        title: "Level 5 Champ",
+        description: "Reach Level 5.",
+        category: "title" as const,
+        criteria: "reach_level_5",
+        imageUrl: null,
+      },
+    ];
+
+    for (const unlockable of DEFAULT_UNLOCKABLES) {
+      await db.insert(unlockables).values({ ...unlockable, isActive: true });
+    }
+    console.log(`[Seed] Seeded ${DEFAULT_UNLOCKABLES.length} default unlockables.`);
+  } catch (err) {
+    console.warn("[Seed] Failed to seed unlockables:", err);
+  }
+}
+
+async function seedDefaultDailyChallengesIfEmpty() {
+  try {
+    const db = await getDb();
+    if (!db) return;
+    const existing = await db.select().from(dailyChallenges).limit(1);
+    if (existing.length > 0) return;
+
+    const DEFAULT_DAILY_CHALLENGES = [
+      {
+        title: "Daily Quest Runner",
+        description: "Complete one quest today.",
+        challengeType: "complete_quest" as const,
+        target: 1,
+        rewardXp: 75,
+        active: true,
+      },
+      {
+        title: "Legendary Seeker",
+        description: "Complete a legendary quest today.",
+        challengeType: "legendary_quest" as const,
+        target: 1,
+        rewardXp: 150,
+        active: true,
+      },
+      {
+        title: "Daily Habit",
+        description: "Submit proof for any quest today.",
+        challengeType: "submit_media" as const,
+        target: 1,
+        rewardXp: 50,
+        active: true,
+      },
+    ];
+
+    for (const challenge of DEFAULT_DAILY_CHALLENGES) {
+      await db.insert(dailyChallenges).values(challenge);
+    }
+    console.log(`[Seed] Seeded ${DEFAULT_DAILY_CHALLENGES.length} default daily challenges.`);
+  } catch (err) {
+    console.warn("[Seed] Failed to seed daily challenges:", err);
+  }
+}
+
 startServer().catch(console.error);
 
-// Seed owner admin and default quests after a short delay to allow DB to be ready
+// Seed owner admin, default quests, default unlockables, and default daily challenges after a short delay to allow DB to be ready
 setTimeout(() => {
   seedOwnerAdmin();
   seedDefaultQuestsIfEmpty();
+  seedDefaultUnlockablesIfEmpty();
+  seedDefaultDailyChallengesIfEmpty();
 }, 3000);

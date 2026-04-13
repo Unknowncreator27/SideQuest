@@ -78,6 +78,20 @@
       "when": 1775975380130,
       "tag": "0010_windy_iron_lad",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "5",
+      "when": 1775980220531,
+      "tag": "0011_shocking_blue_blade",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "5",
+      "when": 1775981169707,
+      "tag": "0012_green_mordo",
+      "breakpoints": true
     }
   ]
 }
