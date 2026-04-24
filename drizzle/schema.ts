@@ -26,6 +26,7 @@ export const users = mysqlTable("users", {
   emailVerificationExpires: timestamp("emailVerificationExpires"),
   passwordResetToken: varchar("passwordResetToken", { length: 255 }),
   passwordResetExpires: timestamp("passwordResetExpires"),
+  selectedBadgeId: int("selectedBadgeId"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
@@ -48,6 +49,7 @@ export const quests = mysqlTable("quests", {
   expiresAt: timestamp("expiresAt"),
   imageUrl: text("imageUrl"),
   completionCount: int("completionCount").default(0).notNull(),
+  repeatable: boolean("repeatable").default(false).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -68,6 +70,7 @@ export const submissions = mysqlTable("submissions", {
   aiConfidence: float("aiConfidence"),
   aiReason: text("aiReason"),
   xpAwarded: int("xpAwarded").default(0).notNull(),
+  isPublic: boolean("isPublic").default(false).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -102,6 +105,7 @@ export const questProposals = mysqlTable("questProposals", {
   expiresAt: timestamp("expiresAt"),
   status: mysqlEnum("status", ["pending", "approved", "rejected"]).default("pending").notNull(),
   rejectionReason: text("rejectionReason"),
+  repeatable: boolean("repeatable").default(false).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -153,6 +157,7 @@ export const unlockables = mysqlTable("unlockables", {
   description: text("description").notNull(),
   category: mysqlEnum("category", ["badge", "cosmetic", "title", "boost"]).notNull(),
   criteria: text("criteria").notNull(),
+  priceXp: int("priceXp").default(0).notNull(),
   imageUrl: text("imageUrl"),
   isActive: boolean("isActive").default(true).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),

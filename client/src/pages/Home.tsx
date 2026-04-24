@@ -85,6 +85,7 @@ export default function Home() {
   const { isAuthenticated } = useAuth();
   const { data: leaderboard } = trpc.user.leaderboard.useQuery();
   const { data: quests } = trpc.quest.list.useQuery({ status: "active" });
+  const { data: activity } = trpc.activity.global.useQuery({ limit: 6 });
 
   const particles = Array.from({ length: 20 }, (_, i) => ({
     delay: i * 0.3,
@@ -245,6 +246,101 @@ export default function Home() {
                   <div className="text-xs text-muted-foreground tracking-widest">{stat.label}</div>
                 </div>
               ))}
+            </motion.div>
+          </div>
+        </div>
+      </section>
+
+      {/* Activity Feed Section */}
+      <section className="py-12 relative overflow-hidden">
+        <div className="container">
+          <div className="flex flex-col lg:flex-row gap-8 items-start">
+            {/* Activity Feed */}
+            <div className="flex-1 w-full">
+              <motion.div
+                initial={{ opacity: 0, x: -20 }}
+                whileInView={{ opacity: 1, x: 0 }}
+                viewport={{ once: true }}
+                className="flex items-center gap-3 mb-8"
+              >
+                <div className="p-2 rounded-lg bg-primary/10 border border-primary/20 text-primary">
+                  <Zap size={20} />
+                </div>
+                <div>
+                  <h2 className="text-2xl font-black tracking-wider uppercase" style={{ fontFamily: "Orbitron, monospace" }}>
+                    Live Activity
+                  </h2>
+                  <p className="text-xs text-muted-foreground uppercase tracking-widest">Recent wins from the community</p>
+                </div>
+              </motion.div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {activity?.map((item, i) => (
+                  <motion.div
+                    key={item.id}
+                    initial={{ opacity: 0, y: 20 }}
+                    whileInView={{ opacity: 1, y: 0 }}
+                    viewport={{ once: true }}
+                    transition={{ delay: i * 0.1 }}
+                    className="game-card p-4 flex items-start gap-4 group hover:border-primary/40 transition-colors"
+                  >
+                    <div className="mt-1">
+                      {item.type === "quest_completion" ? (
+                        <Swords size={18} className="text-primary" />
+                      ) : item.type === "level_up" ? (
+                        <Zap size={18} className="text-yellow-400" />
+                      ) : (
+                        <Trophy size={18} className="text-purple-400" />
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex justify-between items-start mb-1">
+                        <span className="text-sm font-black text-primary truncate" style={{ fontFamily: "Orbitron, monospace" }}>
+                          {item.userName}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+                          {new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </div>
+                      <p className="text-sm font-bold leading-tight mb-1">{item.title}</p>
+                      <p className="text-xs text-muted-foreground truncate">{item.detail}</p>
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+            </div>
+
+            {/* Quick Stats Sidebar */}
+            <motion.div 
+              initial={{ opacity: 0, x: 20 }}
+              whileInView={{ opacity: 1, x: 0 }}
+              viewport={{ once: true }}
+              className="w-full lg:w-80"
+            >
+              <div className="game-card p-6 border-primary/20 bg-primary/5">
+                <h3 className="text-sm font-black mb-4 tracking-widest uppercase text-primary" style={{ fontFamily: "Orbitron, monospace" }}>
+                  World Status
+                </h3>
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center py-2 border-b border-primary/10">
+                    <span className="text-xs text-muted-foreground">Active Quests</span>
+                    <span className="text-sm font-bold">{quests?.filter(q => q.quest.status === "active").length ?? 0}</span>
+                  </div>
+                  <div className="flex justify-between items-center py-2 border-b border-primary/10">
+                    <span className="text-xs text-muted-foreground">Total Heroes</span>
+                    <span className="text-sm font-bold">{leaderboard?.length ?? 0}</span>
+                  </div>
+                  <div className="flex justify-between items-center py-2 border-b border-primary/10">
+                    <span className="text-xs text-muted-foreground">Level Cap</span>
+                    <span className="text-sm font-bold text-yellow-400">99</span>
+                  </div>
+                </div>
+                <Link href="/quests">
+                  <button className="w-full mt-6 py-2 rounded-lg bg-primary/10 border border-primary/20 text-primary text-xs font-bold hover:bg-primary/20 transition-colors uppercase tracking-widest">
+                    Join the Fray
+                  </button>
+                </Link>
+              </div>
             </motion.div>
           </div>
         </div>

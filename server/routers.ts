@@ -33,6 +33,12 @@ import {
   createUnlockables,
   grantUnlockable,
   getUserUnlockable,
+  getUnlockableById,
+  getShopItems,
+  getUserShopItems,
+  purchaseShopItem,
+  purchaseCosmeticUnlockable,
+  updateUser,
   getDailyChallenges,
   getUserDailyChallenges,
   completeDailyChallenge,
@@ -41,7 +47,10 @@ import {
   getUserCompletedQuestDifficultySet,
   getUserCompletedLegendaryQuestCount,
   awardDailyStreakUnlockablesForUser,
+  markNotificationRead,
   countAdmins,
+  getAdminMetrics,
+  getUserJourney,
   updateUserRole,
   hasUserCompletedQuest,
   markNotificationsRead,
@@ -55,6 +64,7 @@ import {
   xpForLevel,
   xpForNextLevel,
   getPendingSubmissions,
+  getGlobalActivity,
 } from "./db";
 import { invokeLLM } from "./_core/llm";
 import { storagePut } from "./storage";
@@ -175,6 +185,12 @@ async function syncUnlockablesForUser(userId: number) {
   const unlockables = await getUnlockables();
   const completedCount = await getUserCompletedQuestCount(userId);
   const legendaryCount = await getUserCompletedLegendaryQuestCount(userId);
+  const difficultyCounts = await getUserCompletedQuestDifficultyCounts(userId);
+  const completedDifficulties = new Set(
+    Object.entries(difficultyCounts).filter(([, count]) => count > 0).map(([diff]) => diff)
+  );
+  const dailyStatuses = await getUserDailyChallenges(userId);
+  const maxStreakCount = Math.max(0, ...dailyStatuses.map((status) => status.streakCount ?? 0));
   const user = await getUserById(userId);
   if (!user) return [];
 
@@ -188,6 +204,15 @@ async function syncUnlockablesForUser(userId: number) {
     switch (unlockable.criteria) {
       case "first_quest_completed":
         qualifies = completedCount >= 1;
+        break;
+      case "first_medium_quest_completed":
+        qualifies = difficultyCounts.medium >= 1;
+        break;
+      case "first_hard_quest_completed":
+        qualifies = difficultyCounts.hard >= 1;
+        break;
+      case "quest_variety_completed":
+        qualifies = ["easy", "medium", "hard"].every((diff) => completedDifficulties.has(diff));
         break;
       case "five_quests_completed":
         qualifies = completedCount >= 5;
@@ -203,6 +228,12 @@ async function syncUnlockablesForUser(userId: number) {
         break;
       case "reach_level_10":
         qualifies = user.level >= 10;
+        break;
+      case "daily_streak_3":
+        qualifies = maxStreakCount >= 3;
+        break;
+      case "daily_streak_7":
+        qualifies = maxStreakCount >= 7;
         break;
       default:
         break;
@@ -256,7 +287,7 @@ async function processSubmissionReview(
     const allParticipantIds = Array.from(new Set([sub.userId, ...teamMemberIds]));
 
     for (const participantId of allParticipantIds) {
-      if (await hasUserCompletedQuest(participantId, quest.id)) {
+      if (await hasUserCompletedQuest(participantId, quest.id) && !quest.repeatable) {
         continue;
       }
 
@@ -471,7 +502,7 @@ const submissionRouter = router({
       }
 
       const alreadyDone = await hasUserCompletedQuest(ctx.user.id, input.questId);
-      if (alreadyDone) {
+      if (alreadyDone && !quest.quest.repeatable) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "You already completed this quest" });
       }
 
@@ -519,7 +550,7 @@ const submissionRouter = router({
     }
 
     const alreadyDone = await hasUserCompletedQuest(ctx.user.id, input.questId);
-    if (alreadyDone) {
+    if (alreadyDone && !quest.quest.repeatable) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "You already completed this quest" });
     }
 
@@ -817,6 +848,13 @@ const notificationRouter = router({
     return getUnreadNotificationCount(ctx.user.id);
   }),
 
+  markRead: protectedProcedure
+    .input(z.object({ notificationId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await markNotificationRead(ctx.user.id, input.notificationId);
+      return { success: true };
+    }),
+
   markAllRead: protectedProcedure.mutation(async ({ ctx }) => {
     await markNotificationsRead(ctx.user.id);
     return { success: true };
@@ -840,6 +878,7 @@ const unlockablesRouter = router({
         description: z.string().min(1),
         category: z.enum(["badge", "cosmetic", "title", "boost"]),
         criteria: z.string().min(1),
+        priceXp: z.number().min(0).default(0),
         imageUrl: z.string().optional(),
         isActive: z.boolean().default(true),
       })
@@ -850,6 +889,16 @@ const unlockablesRouter = router({
       }
       const id = await createUnlockables(input);
       return { id };
+    }),
+
+  buy: protectedProcedure
+    .input(z.object({ unlockableId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      const purchase = await purchaseCosmeticUnlockable(ctx.user.id, input.unlockableId);
+      if (!purchase.success) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: purchase.message });
+      }
+      return purchase;
     }),
 
   grant: protectedProcedure
@@ -873,6 +922,37 @@ const unlockablesRouter = router({
     }),
 });
 
+const SHOP_UNLOCK_LEVEL = 5;
+
+const shopRouter = router({
+  list: publicProcedure.query(async () => {
+    return getShopItems();
+  }),
+
+  myItems: protectedProcedure.query(async ({ ctx }) => {
+    return getUserShopItems(ctx.user.id);
+  }),
+
+  buy: protectedProcedure
+    .input(z.object({ unlockableId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = await getUserById(ctx.user.id);
+      if (!user) throw new TRPCError({ code: "NOT_FOUND" });
+      if (user.level < SHOP_UNLOCK_LEVEL) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: `Shop unlocks at Level ${SHOP_UNLOCK_LEVEL}.`,
+        });
+      }
+
+      const purchase = await purchaseShopItem(ctx.user.id, input.unlockableId);
+      if (!purchase.success) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: purchase.message });
+      }
+      return purchase;
+    }),
+});
+
 const dailyRouter = router({
   list: publicProcedure.query(async () => {
     return getDailyChallenges();
@@ -889,19 +969,49 @@ const dailyRouter = router({
     }),
 });
 
+const activityRouter = router({
+  global: publicProcedure
+    .input(z.object({ limit: z.number().optional().default(20) }))
+    .query(async ({ input }) => {
+      return getGlobalActivity(input.limit);
+    }),
+});
 const userRouter = router({
   profile: protectedProcedure.query(async ({ ctx }) => {
     const user = await getUserById(ctx.user.id);
     if (!user) throw new TRPCError({ code: "NOT_FOUND" });
     const currentLevelXp = xpForLevel(user.level);
     const nextLevelXp = xpForNextLevel(user.level);
+    const selectedBadge = user.selectedBadgeId ? await getUnlockableById(user.selectedBadgeId) : null;
     return {
       ...user,
+      selectedBadge,
       currentLevelXp,
       nextLevelXp,
       xpProgress: user.xp - currentLevelXp,
       xpNeeded: nextLevelXp - currentLevelXp,
     };
+  }),
+
+  setSelectedBadge: protectedProcedure
+    .input(z.object({ unlockableId: z.number().nullable() }))
+    .mutation(async ({ ctx, input }) => {
+      if (input.unlockableId === null) {
+        await updateUser(ctx.user.id, { selectedBadgeId: null });
+        return { success: true };
+      }
+
+      const owned = await getUserUnlockable(ctx.user.id, input.unlockableId);
+      if (!owned || owned.unlockable.category !== "badge") {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Badge not owned or invalid." });
+      }
+
+      await updateUser(ctx.user.id, { selectedBadgeId: input.unlockableId });
+      return { success: true };
+    }),
+
+  journey: protectedProcedure.query(async ({ ctx }) => {
+    return getUserJourney(ctx.user.id);
   }),
 
   leaderboard: publicProcedure.query(async () => {
@@ -1056,6 +1166,7 @@ submit: protectedProcedure
       duration: z.enum(["none", "1h", "6h", "24h", "7d", "30d"]).default("24h"),
       requirementType: z.enum(["individual", "team"]).default("individual"), // optional
       requiredMediaCount: z.number().min(1).max(5).default(1),               // optional
+      repeatable: z.boolean().default(false),                                // optional
     })
   )
   .mutation(async ({ ctx, input }) => {
@@ -1069,6 +1180,7 @@ submit: protectedProcedure
       duration: input.duration,
       requirementType: input.requirementType,     // optional
       requiredMediaCount: input.requiredMediaCount, // optional
+      repeatable: input.repeatable,                 // optional
     });
 
     const user = await getUserById(ctx.user.id);
@@ -1129,6 +1241,7 @@ submit: protectedProcedure
         requirementType: proposal[0].requirementType,
         requiredMediaCount: proposal[0].requiredMediaCount,
         questProposalId: input.proposalId,
+        repeatable: proposal[0].repeatable,
       });
 
       await updateQuestProposal(input.proposalId, { status: "approved" });
@@ -1334,6 +1447,7 @@ submit: protectedProcedure
 export const appRouter = router({
   system: systemRouter,
   unlockables: unlockablesRouter,
+  shop: shopRouter,
   auth: router({
     me: publicProcedure.query((opts) => opts.ctx.user),
     logout: publicProcedure.mutation(({ ctx }) => {
@@ -1423,6 +1537,7 @@ export const appRouter = router({
   user: userRouter,
   proposal: proposalRouter,
   team: teamRouter,
+  activity: activityRouter,
 });
 
 export type AppRouter = typeof appRouter;

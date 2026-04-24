@@ -58,6 +58,7 @@ export default function CreateQuest() {
   const [requirementType, setRequirementType] = useState<"individual" | "team">("individual");
   const [requiredMediaCount, setRequiredMediaCount] = useState(1);
   const [duration, setDuration] = useState<DurationOption>("24h");
+  const [repeatable, setRepeatable] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [teamMembers, setTeamMembers] = useState<Array<{ id: number; name: string | null; avatarUrl: string | null; level: number; xp: number }>>([]);
   const [searchQuery, setSearchQuery] = useState("");
@@ -134,6 +135,7 @@ export default function CreateQuest() {
         duration,
         requirementType,
         requiredMediaCount,
+        repeatable,
       });
 
       // Invite team members if it's a team quest
@@ -282,7 +284,32 @@ export default function CreateQuest() {
               <p className="text-xs text-muted-foreground mt-2">{diffInfo.desc}</p>
             </div>
 
-            {/* Requirement Type - unchanged */}
+                    {/* Repeatable Quest */}
+            <div className="game-card p-5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <label className="block text-xs font-bold tracking-widest text-muted-foreground mb-1">
+                    REPEATABLE QUEST
+                  </label>
+                  <p className="text-xs text-muted-foreground">Allow users to complete this quest multiple times</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setRepeatable(!repeatable)}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${
+                    repeatable ? "bg-primary" : "bg-muted"
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                      repeatable ? "translate-x-6" : "translate-x-1"
+                    }`}
+                  />
+                </button>
+              </div>
+            </div>
+
+            {/* Requirement Type */}
             <div className="game-card p-5">
               <label className="block text-xs font-bold tracking-widest text-muted-foreground mb-3">
                 REQUIREMENT TYPE

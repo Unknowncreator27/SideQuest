@@ -9,9 +9,9 @@ import {
   Compass,
   Crown,
   LogIn,
-  LogOut,
   Menu,
   Plus,
+  Settings,
   Shield,
   Swords,
   User,
@@ -46,6 +46,7 @@ function NotificationPanel({ onClose }: { onClose: () => void }) {
   const { data: notifications } = trpc.notification.list.useQuery();
   const markRead = trpc.notification.markAllRead.useMutation();
   const utils = trpc.useUtils();
+  const [, setLocation] = useLocation();
 
   const handleMarkRead = () => {
     markRead.mutate(undefined, {
@@ -87,9 +88,14 @@ function NotificationPanel({ onClose }: { onClose: () => void }) {
           </div>
         ) : (
           notifications.map((n) => (
-            <div
+            <button
               key={n.id}
-              className={`px-4 py-3 border-b border-border/50 transition-colors ${
+              type="button"
+              onClick={() => {
+                setLocation(`/notifications?selectedId=${n.id}`);
+                onClose();
+              }}
+              className={`w-full text-left px-4 py-3 border-b border-border/50 transition-colors ${
                 !n.read ? "bg-primary/5" : ""
               }`}
             >
@@ -108,7 +114,7 @@ function NotificationPanel({ onClose }: { onClose: () => void }) {
                   </p>
                 </div>
               </div>
-            </div>
+            </button>
           ))
         )}
       </div>
@@ -118,7 +124,7 @@ function NotificationPanel({ onClose }: { onClose: () => void }) {
 
 export default function NavBar() {
   const { user, isAuthenticated, logout } = useAuth();
-  const [location] = useLocation();
+  const [location, setLocation] = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
@@ -135,6 +141,11 @@ export default function NavBar() {
     enabled: isAuthenticated && user?.role === "admin",
     refetchInterval: 30000,
   });
+  const { data: pendingReviewCount } = trpc.submission.pending.useQuery(undefined, {
+    enabled: isAuthenticated && user?.role === "admin",
+    refetchInterval: 30000,
+    select: (data) => data.length,
+  });
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -146,10 +157,16 @@ export default function NavBar() {
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
+  const shopUnlocked = isAuthenticated && profile?.level != null && profile.level >= 5;
+
   const navLinks = [
     { href: "/quests", label: "QUESTS", icon: <Compass size={15} /> },
     { href: "/leaderboard", label: "RANKINGS", icon: <Crown size={15} /> },
-    ...(isAuthenticated ? [{ href: "/dashboard", label: "DASHBOARD", icon: <User size={15} /> }] : []),
+    ...(isAuthenticated ? [
+      { href: "/dashboard", label: "DASHBOARD", icon: <User size={15} /> },
+      ...(shopUnlocked ? [{ href: "/shop", label: "SHOP", icon: <Zap size={15} /> }] : []),
+      { href: "/notifications", label: "NOTIFS", icon: <Bell size={15} /> },
+    ] : []),
     ...(isAuthenticated && user?.role === "admin" ? [
       { href: "/admin/proposals", label: "PROPOSALS", icon: <ClipboardList size={15} /> },
       { href: "/admin/reviews", label: "REVIEWS", icon: <Check size={15} /> },
@@ -191,20 +208,33 @@ export default function NavBar() {
 
           {/* Desktop Nav */}
           <div className="hidden md:flex items-center gap-1">
-            {navLinks.map((link) => (
-              <Link key={link.href} href={link.href}>
-                <div
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold tracking-widest transition-all duration-200 ${
-                    isActive(link.href)
-                      ? "text-primary bg-primary/10 border border-primary/30"
-                      : "text-muted-foreground hover:text-foreground hover:bg-secondary"
-                  }`}
-                >
-                  {link.icon}
-                  {link.label}
-                </div>
-              </Link>
-            ))}
+            {navLinks.map((link) => {
+              const pendingCount =
+                link.href === "/admin/proposals"
+                  ? (pendingProposals?.length ?? 0)
+                  : link.href === "/admin/reviews"
+                  ? (pendingReviewCount ?? 0)
+                  : 0;
+              return (
+                <Link key={link.href} href={link.href}>
+                  <div
+                    className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold tracking-widest transition-all duration-200 ${
+                      isActive(link.href)
+                        ? "text-primary bg-primary/10 border border-primary/30"
+                        : "text-muted-foreground hover:text-foreground hover:bg-secondary"
+                    }`}
+                  >
+                    {link.icon}
+                    {link.label}
+                    {pendingCount > 0 && (
+                      <span className="absolute top-0 right-0 -translate-y-1/2 translate-x-1/2 inline-flex items-center justify-center rounded-full bg-primary px-2 py-0.5 text-[10px] font-bold text-primary-foreground">
+                        {pendingCount > 99 ? "99+" : pendingCount}
+                      </span>
+                    )}
+                  </div>
+                </Link>
+              );
+            })}
           </div>
 
           {/* Right side */}
@@ -226,6 +256,16 @@ export default function NavBar() {
                   <ClipboardList size={18} />
                   <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
                     {(pendingProposals?.length ?? 0) > 99 ? "99+" : pendingProposals?.length}
+                  </span>
+                </button>
+              </Link>
+            )}
+            {isAuthenticated && user?.role === "admin" && (pendingReviewCount ?? 0) > 0 && (
+              <Link href="/admin/reviews">
+                <button className="relative p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors hidden sm:flex items-center">
+                  <Check size={18} />
+                  <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
+                    {(pendingReviewCount ?? 0) > 99 ? "99+" : pendingReviewCount}
                   </span>
                 </button>
               </Link>
@@ -259,11 +299,11 @@ export default function NavBar() {
                 </div>
 
                 <button
-                  onClick={() => logout()}
-                  className="p-2 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-                  title="Logout"
+                  onClick={() => setLocation("/settings")}
+                  className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                  title="Settings"
                 >
-                  <LogOut size={16} />
+                  <Settings size={16} />
                 </button>
               </>
             )}
@@ -317,7 +357,12 @@ export default function NavBar() {
                 </div>
               )}
               {navLinks.map((link) => {
-                const pendingCount = link.href === "/admin/proposals" ? (pendingProposals?.length ?? 0) : 0;
+                const pendingCount =
+                  link.href === "/admin/proposals"
+                    ? (pendingProposals?.length ?? 0)
+                    : link.href === "/admin/reviews"
+                    ? (pendingReviewCount ?? 0)
+                    : 0;
                 return (
                   <Link key={link.href} href={link.href}>
                     <div

@@ -28,6 +28,7 @@ import {
   users,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
+import { getNetworkMetrics } from "./_core/metrics";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -120,6 +121,173 @@ export async function countAdmins() {
     .where(eq(users.role, "admin"));
 
   return Number(result[0]?.count ?? 0);
+}
+
+export async function getAdminMetrics() {
+  const db = await getDb();
+  if (!db) {
+    return {
+      totalUsers: 0,
+      totalAdmins: 0,
+      activeUsersLast30Days: 0,
+      totalQuests: 0,
+      totalApprovedSubmissions: 0,
+      totalPendingReviews: 0,
+      totalPendingProposals: 0,
+      completionsLast7Days: 0,
+      averageApprovedSubmissionsPerUser: 0,
+      dailyActiveUsers: [] as Array<{ date: string; count: number }>,
+      dailySignups: [] as Array<{ date: string; count: number }>,
+      topQuestCompletions: [] as Array<{ questId: number; title: string; completedCount: number }>,
+      avgReviewTurnaroundHours: 0,
+      topCompleters: [] as Array<{ userId: number; name: string; completedCount: number }>,
+      completionsByDifficulty: { easy: 0, medium: 0, hard: 0, legendary: 0 },
+      network: {
+        totalRequests: 0,
+        totalBytesIn: 0,
+        totalBytesOut: 0,
+        totalTrafficBytes: 0,
+        uniqueVisitors: 0,
+        topPaths: [],
+        requestsByMethod: {},
+        requestsByStatus: {},
+        requestErrorRate: 0,
+        averageRequestSize: 0,
+        averageResponseSize: 0,
+      },
+    };
+  }
+
+  const now = new Date();
+  const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+  const dateKeys = Array.from({ length: 7 }, (_, index) => {
+    const day = new Date(now.getTime() - (6 - index) * 24 * 60 * 60 * 1000);
+    return day.toISOString().slice(0, 10);
+  });
+  const activeUsersByDay = new Map(dateKeys.map((date) => [date, 0]));
+  const signupsByDay = new Map(dateKeys.map((date) => [date, 0]));
+
+  const [totalUsersResult, totalAdminsResult, activeUsersResult, totalQuestsResult, totalApprovedResult, totalPendingReviewsResult, totalPendingProposalsResult, completionsLast7DaysResult, uniqueSubmittersResult, activeUsersRows, signupsRows, topQuestRows, reviewTimeRows] =
+    await Promise.all([
+      db.select({ count: sql`COUNT(*)` }).from(users).limit(1),
+      db.select({ count: sql`COUNT(*)` }).from(users).where(eq(users.role, "admin")).limit(1),
+      db.select({ count: sql`COUNT(*)` })
+        .from(users)
+        .where(gt(users.lastSignedIn, monthAgo))
+        .limit(1),
+      db.select({ count: sql`COUNT(*)` }).from(quests).limit(1),
+      db.select({ count: sql`COUNT(*)` }).from(submissions).where(eq(submissions.status, "approved")).limit(1),
+      db.select({ count: sql`COUNT(*)` }).from(submissions).where(eq(submissions.status, "pending")).limit(1),
+      db.select({ count: sql`COUNT(*)` }).from(questProposals).where(eq(questProposals.status, "pending")).limit(1),
+      db.select({ count: sql`COUNT(*)` })
+        .from(submissions)
+        .where(and(eq(submissions.status, "approved"), gt(submissions.createdAt, weekAgo)))
+        .limit(1),
+      db.select({ count: sql`COUNT(DISTINCT ${submissions.userId})` })
+        .from(submissions)
+        .where(eq(submissions.status, "approved"))
+        .limit(1),
+      db
+        .select({ date: sql`DATE(${users.lastSignedIn})`, count: sql`COUNT(*)` })
+        .from(users)
+        .where(gt(users.lastSignedIn, weekAgo))
+        .groupBy(sql`DATE(${users.lastSignedIn})`)
+        .orderBy(sql`DATE(${users.lastSignedIn})`),
+      db
+        .select({ date: sql`DATE(${users.createdAt})`, count: sql`COUNT(*)` })
+        .from(users)
+        .where(gt(users.createdAt, weekAgo))
+        .groupBy(sql`DATE(${users.createdAt})`)
+        .orderBy(sql`DATE(${users.createdAt})`),
+      db
+        .select({ questId: submissions.questId, title: quests.title, completedCount: sql`COUNT(*)` })
+        .from(submissions)
+        .leftJoin(quests, eq(submissions.questId, quests.id))
+        .where(eq(submissions.status, "approved"))
+        .groupBy(submissions.questId)
+        .orderBy(desc(sql`COUNT(*)`))
+        .limit(5),
+      db
+        .select({ avgSeconds: sql`AVG(TIMESTAMPDIFF(SECOND, ${submissions.createdAt}, ${submissions.updatedAt}))` })
+        .from(submissions)
+        .where(and(eq(submissions.status, "approved"), gt(submissions.updatedAt, weekAgo))),
+    ]);
+
+  for (const row of activeUsersRows) {
+    const date = String((row as any).date ?? "");
+    if (date && activeUsersByDay.has(date)) {
+      activeUsersByDay.set(date, Number((row as any).count ?? 0));
+    }
+  }
+  for (const row of signupsRows) {
+    const date = String((row as any).date ?? "");
+    if (date && signupsByDay.has(date)) {
+      signupsByDay.set(date, Number((row as any).count ?? 0));
+    }
+  }
+
+  const completionRows = await db
+    .select({ difficulty: quests.difficulty, count: sql`COUNT(*)` })
+    .from(submissions)
+    .leftJoin(quests, eq(submissions.questId, quests.id))
+    .where(eq(submissions.status, "approved"))
+    .groupBy(quests.difficulty);
+
+  const topCompletersRows = await db
+    .select({ userId: submissions.userId, name: users.name, completedCount: sql`COUNT(*)` })
+    .from(submissions)
+    .leftJoin(users, eq(submissions.userId, users.id))
+    .where(eq(submissions.status, "approved"))
+    .groupBy(submissions.userId)
+    .orderBy(desc(sql`COUNT(*)`))
+    .limit(5);
+
+  const completionsByDifficulty = {
+    easy: 0,
+    medium: 0,
+    hard: 0,
+    legendary: 0,
+  };
+  for (const row of completionRows) {
+    const diff = row.difficulty;
+    if (diff && diff in completionsByDifficulty) {
+      completionsByDifficulty[diff as keyof typeof completionsByDifficulty] = Number((row as any).count ?? 0);
+    }
+  }
+
+  const totalUsers = Number(totalUsersResult[0]?.count ?? 0);
+  const totalApprovedSubmissions = Number(totalApprovedResult[0]?.count ?? 0);
+  const totalApprovedUsers = Number(uniqueSubmittersResult[0]?.count ?? 0) || 1;
+  const avgReviewSeconds = Number(reviewTimeRows[0]?.avgSeconds ?? 0);
+
+  return {
+    totalUsers,
+    totalAdmins: Number(totalAdminsResult[0]?.count ?? 0),
+    activeUsersLast30Days: Number(activeUsersResult[0]?.count ?? 0),
+    totalQuests: Number(totalQuestsResult[0]?.count ?? 0),
+    totalApprovedSubmissions: Number(totalApprovedResult[0]?.count ?? 0),
+    totalPendingReviews: Number(totalPendingReviewsResult[0]?.count ?? 0),
+    totalPendingProposals: Number(totalPendingProposalsResult[0]?.count ?? 0),
+    completionsLast7Days: Number(completionsLast7DaysResult[0]?.count ?? 0),
+    averageApprovedSubmissionsPerUser: totalUsers > 0 ? Number((totalApprovedSubmissions / totalUsers).toFixed(2)) : 0,
+    dailyActiveUsers: dateKeys.map((date) => ({ date, count: activeUsersByDay.get(date) ?? 0 })),
+    dailySignups: dateKeys.map((date) => ({ date, count: signupsByDay.get(date) ?? 0 })),
+    topQuestCompletions: topQuestRows.map((row) => ({
+      questId: Number((row as any).questId ?? 0),
+      title: row.title ?? "Untitled",
+      completedCount: Number((row as any).completedCount ?? 0),
+    })),
+    avgReviewTurnaroundHours: Number((avgReviewSeconds / 3600).toFixed(2)),
+    topCompleters: topCompletersRows.map((row) => ({
+      userId: row.userId,
+      name: row.name ?? `User ${row.userId}`,
+      completedCount: Number((row as any).completedCount ?? 0),
+    })),
+    completionsByDifficulty,
+    network: getNetworkMetrics(),
+  };
 }
 
 export async function updateUserRole(id: number, role: "user" | "admin") {
@@ -235,6 +403,7 @@ export async function getUnlockables() {
       description: unlockables.description,
       category: unlockables.category,
       criteria: unlockables.criteria,
+      priceXp: unlockables.priceXp,
       imageUrl: unlockables.imageUrl,
       isActive: unlockables.isActive,
       createdAt: unlockables.createdAt,
@@ -243,6 +412,107 @@ export async function getUnlockables() {
     .from(unlockables)
     .where(eq(unlockables.isActive, true))
     .orderBy(desc(unlockables.createdAt));
+}
+
+export async function getUnlockableById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const rows = await db
+    .select({
+      id: unlockables.id,
+      title: unlockables.title,
+      description: unlockables.description,
+      category: unlockables.category,
+      criteria: unlockables.criteria,
+      priceXp: unlockables.priceXp,
+      imageUrl: unlockables.imageUrl,
+      isActive: unlockables.isActive,
+      createdAt: unlockables.createdAt,
+      updatedAt: unlockables.updatedAt,
+    })
+    .from(unlockables)
+    .where(eq(unlockables.id, id))
+    .limit(1);
+
+  return rows[0] || null;
+}
+
+export async function getShopItems() {
+  const db = await getDb();
+  if (!db) return [];
+
+  return db
+    .select({
+      id: unlockables.id,
+      title: unlockables.title,
+      description: unlockables.description,
+      category: unlockables.category,
+      criteria: unlockables.criteria,
+      priceXp: unlockables.priceXp,
+      imageUrl: unlockables.imageUrl,
+      isActive: unlockables.isActive,
+      createdAt: unlockables.createdAt,
+      updatedAt: unlockables.updatedAt,
+    })
+    .from(unlockables)
+    .where(and(eq(unlockables.isActive, true), gt(unlockables.priceXp, 0)))
+    .orderBy(desc(unlockables.createdAt));
+}
+
+export async function getUserShopItems(userId: number) {
+  const allItems = await getUserUnlockables(userId);
+  return allItems.filter((item) => item.unlockable.priceXp > 0);
+}
+
+export async function purchaseShopItem(userId: number, unlockableId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+
+  const unlockable = await getUnlockableById(unlockableId);
+  if (!unlockable) {
+    return { success: false, message: "Shop item not found." };
+  }
+
+  if (!unlockable.isActive) {
+    return { success: false, message: "This item is not available in the shop." };
+  }
+
+  if (unlockable.priceXp <= 0) {
+    return { success: false, message: "This item is not available in the shop." };
+  }
+
+  const existing = await getUserUnlockable(userId, unlockableId);
+  if (existing) {
+    return { success: false, message: "You already own this item." };
+  }
+
+  const user = await getUserById(userId);
+  if (!user) throw new Error("User not found");
+  if ((user.xp ?? 0) < unlockable.priceXp) {
+    return { success: false, message: "Not enough XP to purchase this item." };
+  }
+
+  const xpResult = await addXpToUser(userId, -unlockable.priceXp);
+  const unlock = await grantUnlockable(userId, unlockableId, JSON.stringify({ purchasedForXp: unlockable.priceXp }));
+  if (!unlock) {
+    return { success: false, message: "Failed to grant shop item." };
+  }
+
+  await createNotification({
+    userId,
+    type: "unlockable_earned",
+    title: `Purchased ${unlockable.title}`,
+    message: `You spent ${unlockable.priceXp} XP to unlock ${unlockable.title}.`,
+    metadata: JSON.stringify({ unlockableId, priceXp: unlockable.priceXp }),
+  });
+
+  return {
+    success: true,
+    xpSpent: unlockable.priceXp,
+    newXp: xpResult.newXp,
+    unlockable,
+  };
 }
 
 export async function getUserUnlockables(userId: number) {
@@ -262,6 +532,7 @@ export async function getUserUnlockables(userId: number) {
         description: unlockables.description,
         category: unlockables.category,
         criteria: unlockables.criteria,
+        priceXp: unlockables.priceXp,
         imageUrl: unlockables.imageUrl,
       },
     })
@@ -323,6 +594,18 @@ function getDateString(date?: Date | string | null) {
   return d.toISOString().slice(0, 10);
 }
 
+export function getStreakState(lastCompletedAt: Date | string | null, now: Date = new Date()) {
+  const today = getDateString(now);
+  const yesterday = getDateString(new Date(now.getTime() - 24 * 60 * 60 * 1000));
+  const lastDate = getDateString(lastCompletedAt);
+  return {
+    lastDate,
+    isToday: lastDate === today,
+    isYesterday: lastDate === yesterday,
+    shouldReset: lastDate !== today && lastDate !== yesterday,
+  };
+}
+
 export async function getDailyChallenges() {
   const db = await getDb();
   if (!db) return [];
@@ -379,14 +662,15 @@ export async function getUserDailyChallenges(userId: number) {
       lastCompletedAt: null,
       completedAt: null,
     };
-    const lastDate = getDateString(status.lastCompletedAt);
+    const streakState = getStreakState(status.lastCompletedAt);
     return {
       challenge: row.challenge,
       progress: status.progress ?? 0,
-      streakCount: status.streakCount ?? 0,
+      streakCount: streakState.isToday || streakState.isYesterday ? status.streakCount ?? 0 : 0,
       lastCompletedAt: status.lastCompletedAt ?? null,
       completedAt: status.completedAt ?? null,
-      completedToday: lastDate === today,
+      completedToday: streakState.isToday,
+      streakExpired: status.streakCount > 0 && streakState.shouldReset,
     };
   });
 }
@@ -435,8 +719,8 @@ export async function completeDailyChallenge(userId: number, challengeId: number
   const yesterday = getDateString(new Date(now.getTime() - 24 * 60 * 60 * 1000));
 
   const existing = await getUserDailyChallenge(userId, challengeId);
-  const lastCompletedDate = getDateString(existing?.lastCompletedAt);
-  const alreadyCompleted = lastCompletedDate === today;
+  const streakState = getStreakState(existing?.lastCompletedAt ?? null, now);
+  const alreadyCompleted = streakState.isToday;
   if (alreadyCompleted) {
     return {
       success: false,
@@ -446,7 +730,7 @@ export async function completeDailyChallenge(userId: number, challengeId: number
     };
   }
 
-  const previousStreak = lastCompletedDate === yesterday ? existing?.streakCount ?? 0 : 0;
+  const previousStreak = streakState.isYesterday ? existing?.streakCount ?? 0 : 0;
   const streakCount = previousStreak + 1;
   const streakBonus = streakCount > 1 ? Math.min(10 * streakCount, 50) : 0;
   const totalXp = challenge.rewardXp + streakBonus;
@@ -474,7 +758,9 @@ export async function completeDailyChallenge(userId: number, challengeId: number
   }
 
   const xpResult = await addXpToUser(userId, totalXp);
-  const newUnlockables = await awardLevelUnlockablesForUser(userId, xpResult.newLevel, { challengeId });
+  const levelUnlockables = await awardLevelUnlockablesForUser(userId, xpResult.newLevel, { challengeId });
+  const streakUnlockables = await awardDailyStreakUnlockablesForUser(userId, streakCount);
+  const newUnlockables = [...levelUnlockables, ...streakUnlockables];
 
   await createNotification({
     userId,
@@ -483,6 +769,16 @@ export async function completeDailyChallenge(userId: number, challengeId: number
     message: `${challenge.title} complete. Streak: ${streakCount} day${streakCount !== 1 ? "s" : ""}.`,
     metadata: JSON.stringify({ challengeId, streakCount, streakBonus }),
   });
+
+  if (existing?.streakCount && streakState.shouldReset) {
+    await createNotification({
+      userId,
+      type: "milestone",
+      title: `Streak reset`,
+      message: `Your previous ${existing.streakCount}-day streak ended after missing a day. You're back to day 1.`,
+      metadata: JSON.stringify({ previousStreak: existing.streakCount, challengeId }),
+    });
+  }
 
   if (streakCount > 1) {
     await createNotification({
@@ -557,13 +853,75 @@ export async function grantUnlockable(
   return rows[0] || null;
 }
 
+export async function purchaseCosmeticUnlockable(userId: number, unlockableId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+
+  const unlockable = await getUnlockableById(unlockableId);
+  if (!unlockable) {
+    throw new Error("Unlockable not found");
+  }
+
+  if (unlockable.category !== "cosmetic" || unlockable.priceXp <= 0) {
+    throw new Error("This item is not available in the cosmetic shop.");
+  }
+
+  const existing = await getUserUnlockable(userId, unlockableId);
+  if (existing) {
+    return { success: false, message: "You already own this cosmetic." };
+  }
+
+  const user = await getUserById(userId);
+  if (!user) throw new Error("User not found");
+  if ((user.xp ?? 0) < unlockable.priceXp) {
+    return { success: false, message: "Not enough XP to purchase this cosmetic." };
+  }
+
+  const xpResult = await addXpToUser(userId, -unlockable.priceXp);
+  const unlock = await grantUnlockable(userId, unlockableId, JSON.stringify({ purchasedForXp: unlockable.priceXp }));
+  if (!unlock) {
+    return { success: false, message: "Failed to grant cosmetic." };
+  }
+
+  await createNotification({
+    userId,
+    type: "unlockable_earned",
+    title: `Purchased ${unlockable.title}`,
+    message: `You spent ${unlockable.priceXp} XP to unlock ${unlockable.title}.`,
+    metadata: JSON.stringify({ unlockableId, priceXp: unlockable.priceXp }),
+  });
+
+  return {
+    success: true,
+    xpSpent: unlockable.priceXp,
+    newXp: xpResult.newXp,
+    unlockable,
+  };
+}
+
 export async function getUserUnlockable(userId: number, unlockableId: number) {
   const db = await getDb();
   if (!db) return null;
 
   const rows = await db
-    .select()
+    .select({
+      id: userUnlockables.id,
+      userId: userUnlockables.userId,
+      unlockableId: userUnlockables.unlockableId,
+      earnedAt: userUnlockables.earnedAt,
+      metadata: userUnlockables.metadata,
+      unlockable: {
+        id: unlockables.id,
+        title: unlockables.title,
+        description: unlockables.description,
+        category: unlockables.category,
+        criteria: unlockables.criteria,
+        priceXp: unlockables.priceXp,
+        imageUrl: unlockables.imageUrl,
+      },
+    })
     .from(userUnlockables)
+    .innerJoin(unlockables, eq(userUnlockables.unlockableId, unlockables.id))
     .where(
       and(
         eq(userUnlockables.userId, userId),
@@ -708,6 +1066,347 @@ export async function getUserCompletedLegendaryQuestCount(userId: number) {
   return Number(result[0]?.count ?? 0);
 }
 
+export async function getUserApprovedQuestIds(userId: number) {
+  const db = await getDb();
+  if (!db) return new Set<number>();
+
+  const rows = await db
+    .select({ questId: submissions.questId })
+    .from(submissions)
+    .where(
+      and(
+        eq(submissions.status, "approved"),
+        or(
+          eq(submissions.userId, userId),
+          sql`JSON_CONTAINS(${submissions.teamMemberIds}, JSON_QUOTE(${userId}))`
+        )
+      )
+    );
+
+  return new Set(rows.map((row) => Number((row as any).questId ?? 0)));
+}
+
+export async function getUserJourney(userId: number) {
+  const db = await getDb();
+  if (!db) {
+    return {
+      currentLevel: 0,
+      currentXp: 0,
+      xpToNextLevel: 0,
+      xpProgressPercent: 0,
+      streakCount: 0,
+      streakTarget: 0,
+      dailyChallenge: null,
+      nextUnlockables: [] as Array<{
+        id: number;
+        title: string;
+        criteria: string;
+        progress: number;
+        current: number;
+        needed: number;
+        label: string;
+      }> ,
+      recommendedQuests: [] as Array<{
+        id: number;
+        title: string;
+        difficulty: string;
+        xpReward: number;
+        reason: string;
+      }> ,
+      milestoneHints: [] as string[],
+      availableQuestCount: 0,
+      completionCount: 0,
+    };
+  }
+
+  const user = await getUserById(userId);
+  if (!user) {
+    throw new Error("User not found");
+  }
+
+  const currentLevelXp = xpForLevel(user.level);
+  const nextLevelXp = xpForNextLevel(user.level);
+  const totalCompleted = await getUserCompletedQuestCount(userId);
+  const difficultyCounts = await getUserCompletedQuestDifficultyCounts(userId);
+  const legendaryCount = await getUserCompletedLegendaryQuestCount(userId);
+  const dailyStatuses = await getUserDailyChallenges(userId);
+  const todayChallenge = dailyStatuses[0] ?? null;
+  const streakCount = todayChallenge?.streakCount ?? 0;
+  const completedQuestIds = await getUserApprovedQuestIds(userId);
+  const allUnlockables = await getUnlockables();
+  const earnedUnlockables = await getUserUnlockables(userId);
+  const earnedUnlockableIds = new Set(earnedUnlockables.map((unlock) => unlock.unlockable.id));
+  const availableQuestRows = await getQuests({ status: "active" });
+  const availableQuests = availableQuestRows.filter((row) => !completedQuestIds.has(row.quest.id));
+
+  const difficultySet = new Set(
+    Object.entries(difficultyCounts)
+      .filter(([, count]) => count > 0)
+      .map(([difficulty]) => difficulty)
+  );
+  const missingDifficulties = ["easy", "medium", "hard"].filter((difficulty) => !difficultySet.has(difficulty));
+
+  const unlockableProgress = allUnlockables
+    .filter((unlockable) => !earnedUnlockableIds.has(unlockable.id))
+    .map((unlockable) => {
+      let label = unlockable.title;
+      let current = 0;
+      let needed = 1;
+
+      switch (unlockable.criteria) {
+        case "first_quest_completed":
+          label = "Complete your first quest";
+          current = totalCompleted;
+          needed = 1;
+          break;
+        case "first_medium_quest_completed":
+          label = "Complete your first medium quest";
+          current = difficultyCounts.medium;
+          needed = 1;
+          break;
+        case "first_hard_quest_completed":
+          label = "Complete your first hard quest";
+          current = difficultyCounts.hard;
+          needed = 1;
+          break;
+        case "quest_variety_completed":
+          label = "Complete easy, medium, and hard quests";
+          current = ["easy", "medium", "hard"].filter((difficulty) => difficultySet.has(difficulty)).length;
+          needed = 3;
+          break;
+        case "five_quests_completed":
+          label = "Complete 5 quests";
+          current = Math.min(totalCompleted, 5);
+          needed = 5;
+          break;
+        case "ten_quests_completed":
+          label = "Complete 10 quests";
+          current = Math.min(totalCompleted, 10);
+          needed = 10;
+          break;
+        case "legendary_quest_completed":
+          label = "Complete a legendary quest";
+          current = Math.min(legendaryCount, 1);
+          needed = 1;
+          break;
+        case "reach_level_5":
+          label = "Reach level 5";
+          current = Math.min(user.level, 5);
+          needed = 5;
+          break;
+        case "reach_level_10":
+          label = "Reach level 10";
+          current = Math.min(user.level, 10);
+          needed = 10;
+          break;
+        case "daily_streak_3":
+          label = "Keep a 3-day streak";
+          current = Math.min(streakCount, 3);
+          needed = 3;
+          break;
+        case "daily_streak_7":
+          label = "Keep a 7-day streak";
+          current = Math.min(streakCount, 7);
+          needed = 7;
+          break;
+        default:
+          label = unlockable.title;
+          current = 0;
+          needed = 1;
+      }
+
+      return {
+        id: unlockable.id,
+        title: unlockable.title,
+        criteria: unlockable.criteria,
+        progress: Math.min(1, current / Math.max(1, needed)),
+        current,
+        needed,
+        label,
+      };
+    })
+    .sort((a, b) => a.progress - b.progress || a.needed - b.needed);
+
+  const nextUnlockables = unlockableProgress.slice(0, 3);
+
+  const milestones = [
+    {
+      id: "quests_5",
+      title: "Novice Quester",
+      description: "Complete 5 quests",
+      icon: "Trophy",
+      current: totalCompleted,
+      target: 5,
+      rewardXp: 250,
+    },
+    {
+      id: "quests_10",
+      title: "Dedicated Adventurer",
+      description: "Complete 10 quests",
+      icon: "Swords",
+      current: totalCompleted,
+      target: 10,
+      rewardXp: 500,
+    },
+    {
+      id: "level_5",
+      title: "Rising Star",
+      description: "Reach Level 5",
+      icon: "Zap",
+      current: user.level,
+      target: 5,
+      rewardXp: 300,
+    },
+    {
+      id: "level_10",
+      title: "Elite Warrior",
+      description: "Reach Level 10",
+      icon: "Crown",
+      current: user.level,
+      target: 10,
+      rewardXp: 1000,
+    },
+    {
+      id: "streak_3",
+      title: "Consistent",
+      description: "Keep a 3-day streak",
+      icon: "Flame",
+      current: streakCount,
+      target: 3,
+      rewardXp: 150,
+    },
+    {
+      id: "legendary_1",
+      title: "Giant Slayer",
+      description: "Complete a Legendary quest",
+      icon: "Shield",
+      current: legendaryCount,
+      target: 1,
+      rewardXp: 500,
+    },
+  ].map(m => ({
+    ...m,
+    progress: Math.min(100, Math.round((m.current / m.target) * 100)),
+    isCompleted: m.current >= m.target
+  }));
+
+  const recommendedQuests: Array<{
+    id: number;
+    title: string;
+    difficulty: string;
+    xpReward: number;
+    reason: string;
+  }> = [];
+  const selectedQuestIds = new Set<number>();
+
+  const addRecommendedQuest = (row: { quest: Quest } | null | undefined, reason: string) => {
+    if (!row) return;
+    const id = row.quest.id;
+    if (!id || selectedQuestIds.has(id)) return;
+    selectedQuestIds.add(id);
+    recommendedQuests.push({
+      id,
+      title: row.quest.title,
+      difficulty: row.quest.difficulty,
+      xpReward: row.quest.xpReward,
+      reason,
+    });
+  };
+
+  const findQuestByDifficulty = (difficulty: Quest["difficulty"]) =>
+    availableQuests.find((row) => row.quest.difficulty === difficulty);
+  const highestXpQuest = () =>
+    [...availableQuests].sort((a, b) => b.quest.xpReward - a.quest.xpReward)[0] ?? null;
+  const easiestQuest = () =>
+    [...availableQuests].sort((a, b) => a.quest.xpReward - b.quest.xpReward)[0] ?? null;
+  const leastPlayedDifficulty = () => {
+    const counts = [
+      { difficulty: "easy", count: difficultyCounts.easy },
+      { difficulty: "medium", count: difficultyCounts.medium },
+      { difficulty: "hard", count: difficultyCounts.hard },
+    ];
+    counts.sort((a, b) => a.count - b.count);
+    return findQuestByDifficulty(counts[0].difficulty as Quest["difficulty"]);
+  };
+
+  const primaryTarget = nextUnlockables[0];
+  if (primaryTarget) {
+    let targetQuest = null;
+    switch (primaryTarget.criteria) {
+      case "first_medium_quest_completed":
+        targetQuest = findQuestByDifficulty("medium");
+        break;
+      case "first_hard_quest_completed":
+        targetQuest = findQuestByDifficulty("hard");
+        break;
+      case "legendary_quest_completed":
+        targetQuest = findQuestByDifficulty("legendary");
+        break;
+      case "quest_variety_completed":
+        targetQuest = findQuestByDifficulty(missingDifficulties[0] as Quest["difficulty"] || "easy");
+        break;
+      case "five_quests_completed":
+      case "ten_quests_completed":
+      case "reach_level_5":
+      case "reach_level_10":
+        targetQuest = highestXpQuest();
+        break;
+      case "daily_streak_3":
+      case "daily_streak_7":
+        targetQuest = easiestQuest();
+        break;
+      case "first_quest_completed":
+        targetQuest = availableQuests[0] ?? null;
+        break;
+      default:
+        targetQuest = highestXpQuest();
+    }
+
+    addRecommendedQuest(targetQuest, `Move toward: ${primaryTarget.label}`);
+  }
+
+  if (availableQuests.length > 0) {
+    addRecommendedQuest(leastPlayedDifficulty(), "Balance your progress with a new difficulty");
+    addRecommendedQuest(highestXpQuest(), "Earn more XP toward your next level");
+  }
+
+  const milestoneHints: string[] = [];
+  if (nextUnlockables.length > 0) {
+    milestoneHints.push(`Next unlockable: ${nextUnlockables[0].title} (${nextUnlockables[0].current}/${nextUnlockables[0].needed})`);
+  }
+  if (streakCount > 0 && todayChallenge && !todayChallenge.completedToday) {
+    milestoneHints.push(`Keep the streak alive today for +${todayChallenge.challenge.rewardXp} XP`);
+  }
+  if (user.xp - currentLevelXp > 0) {
+    milestoneHints.push(`${nextLevelXp - user.xp} XP to reach level ${user.level + 1}`);
+  }
+  if (recommendedQuests.length === 0 && availableQuests.length > 0) {
+    milestoneHints.push("Explore active quests to keep your adventure moving.");
+  }
+
+  return {
+    currentLevel: user.level,
+    currentXp: user.xp,
+    xpToNextLevel: nextLevelXp - currentLevelXp,
+    xpProgressPercent: currentLevelXp < nextLevelXp ? Math.round(((user.xp - currentLevelXp) / (nextLevelXp - currentLevelXp)) * 100) : 100,
+    streakCount,
+    streakTarget: todayChallenge ? todayChallenge.streakCount + 1 : 0,
+    dailyChallenge: todayChallenge
+      ? {
+          title: todayChallenge.challenge.title,
+          completedToday: todayChallenge.completedToday,
+          rewardXp: todayChallenge.challenge.rewardXp,
+        }
+      : null,
+    nextUnlockables,
+    recommendedQuests,
+    milestoneHints,
+    availableQuestCount: availableQuests.length,
+    completionCount: totalCompleted,
+    milestones,
+  };
+}
+
 export async function updateUser(id: number, updates: Partial<InsertUser>): Promise<boolean> {
   const db = await getDb();
   if (!db) return false;
@@ -757,6 +1456,7 @@ export async function createQuest(quest: InsertQuest): Promise<number> {
     ...quest,
     expiresAt: quest.expiresAt || undefined,
     status: quest.status || "active",
+    repeatable: quest.repeatable ?? false,
   });
   return (result[0] as { insertId: number }).insertId;
 }
@@ -993,6 +1693,15 @@ export async function markNotificationsRead(userId: number) {
     .where(eq(notifications.userId, userId));
 }
 
+export async function markNotificationRead(userId: number, notificationId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db
+    .update(notifications)
+    .set({ read: true })
+    .where(and(eq(notifications.userId, userId), eq(notifications.id, notificationId)));
+}
+
 export async function getUnreadNotificationCount(userId: number) {
   const db = await getDb();
   if (!db) return 0;
@@ -1016,6 +1725,7 @@ export async function createQuestProposal(data: {
   expiresAt?: Date;
   requirementType?: "individual" | "team";
   requiredMediaCount?: number;
+  repeatable?: boolean;
 }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -1031,6 +1741,7 @@ export async function createQuestProposal(data: {
     requirementType: data.requirementType ?? "individual",
     requiredMediaCount: data.requiredMediaCount ?? 1,
     rejectionReason: null,
+    repeatable: data.repeatable ?? false,
   };
 
   const result = await db.insert(questProposals).values(proposalRow);
@@ -1347,4 +2058,85 @@ export async function getQuestTeamMembers(questProposalId: number) {
     );
 
   return members;
+}
+
+// ─── Global Activity ──────────────────────────────────────────────────────────
+
+export async function getGlobalActivity(limit: number = 20) {
+  const db = await getDb();
+  if (!db) return [];
+
+  // Fetch approved, public submissions with user and quest info
+  const recentSubmissions = await db
+    .select({
+      id: submissions.id,
+      type: sql<string>`'quest_completion'`,
+      createdAt: submissions.createdAt,
+      userName: users.name,
+      userAvatar: users.avatarUrl,
+      questTitle: quests.title,
+      xpAwarded: submissions.xpAwarded,
+      difficulty: quests.difficulty,
+      mediaUrl: submissions.mediaUrl,
+      mediaType: submissions.mediaType,
+    })
+    .from(submissions)
+    .innerJoin(users, eq(submissions.userId, users.id))
+    .innerJoin(quests, eq(submissions.questId, quests.id))
+    .where(and(eq(submissions.status, "approved"), eq(submissions.isPublic, true)))
+    .orderBy(desc(submissions.createdAt))
+    .limit(limit);
+
+  // Fetch recent notifications that represent level ups or milestones
+  // We'll filter for public-facing types
+  const recentNotifications = await db
+    .select({
+      id: notifications.id,
+      type: notifications.type,
+      createdAt: notifications.createdAt,
+      userName: users.name,
+      title: notifications.title,
+      message: notifications.message,
+    })
+    .from(notifications)
+    .innerJoin(users, eq(notifications.userId, users.id))
+    .where(
+      or(
+        eq(notifications.type, "level_up"),
+        eq(notifications.type, "unlockable_earned")
+      )
+    )
+    .orderBy(desc(notifications.createdAt))
+    .limit(limit);
+
+  // Combine and sort
+  const combined = [
+    ...recentSubmissions.map((s) => ({
+      id: `sub-${s.id}`,
+      type: "quest_completion",
+      createdAt: s.createdAt,
+      userName: s.userName || "Adventurer",
+      userAvatar: s.userAvatar,
+      title: s.questTitle,
+      detail: `${s.xpAwarded} XP · ${s.difficulty.toUpperCase()}`,
+      mediaUrl: s.mediaUrl,
+      mediaType: s.mediaType,
+    })),
+    ...recentNotifications.map((n) => ({
+      id: `notif-${n.id}`,
+      type: n.type,
+      createdAt: n.createdAt,
+      userName: n.userName || "Adventurer",
+      title: n.title,
+      detail: n.message,
+    })),
+  ]
+    .sort((a, b) => {
+      const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return dateB - dateA;
+    })
+    .slice(0, limit);
+
+  return combined;
 }

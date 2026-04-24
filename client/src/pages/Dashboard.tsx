@@ -3,6 +3,7 @@ import { getLoginUrl } from "@/const";
 import { trpc } from "@/lib/trpc";
 import { motion } from "framer-motion";
 import { useState } from "react";
+import { toast } from "sonner";
 import {
   CheckCircle,
   Clock,
@@ -14,6 +15,9 @@ import {
   Trophy,
   XCircle,
   Zap,
+  Flame,
+  Target,
+  Medal,
 } from "lucide-react";
 import { Link } from "wouter";
 import {
@@ -40,6 +44,20 @@ function getProposalDurationLabel(duration?: string | null) {
     case "7d": return "7 DAYS";
     case "30d": return "30 DAYS";
     default: return duration.toUpperCase();
+  }
+}
+
+function MilestoneIcon({ name, size = 20, className = "" }: { name: string; size?: number; className?: string }) {
+  switch (name) {
+    case "Trophy": return <Trophy size={size} className={className} />;
+    case "Swords": return <Swords size={size} className={className} />;
+    case "Zap": return <Zap size={size} className={className} />;
+    case "Crown": return <Crown size={size} className={className} />;
+    case "Flame": return <Flame size={size} className={className} />;
+    case "Shield": return <Shield size={size} className={className} />;
+    case "Target": return <Target size={size} className={className} />;
+    case "Medal": return <Medal size={size} className={className} />;
+    default: return <Trophy size={size} className={className} />;
   }
 }
 
@@ -97,11 +115,28 @@ export default function Dashboard() {
   const { data: dailyChallenges, isLoading: dailyLoading } = trpc.daily.myStatus.useQuery(undefined, {
     enabled: isAuthenticated,
   });
+  const { data: journey, isLoading: journeyLoading } = trpc.user.journey.useQuery(undefined, {
+    enabled: isAuthenticated,
+  });
   const completeDailyChallenge = trpc.daily.complete.useMutation({
-    onSuccess: async () => {
+    onSuccess: async (data) => {
       await utils.daily.myStatus.invalidate();
       await utils.user.profile.invalidate();
+      await utils.user.journey.invalidate();
       await utils.unlockables.myUnlockables.invalidate();
+      if (data.success) {
+        toast.success(
+          `Daily challenge completed! +${data.totalXp} XP${data.streakBonus ? ` (+${data.streakBonus} bonus)` : ""}`,
+          { icon: "✨" }
+        );
+        if (data.newUnlockables?.length) {
+          toast(`Unlocked: ${data.newUnlockables.map((item) => item.title).join(", ")}`, {
+            icon: "🏆",
+          });
+        }
+      } else if (data.alreadyCompleted) {
+        toast("Daily challenge already completed today.", { icon: "👀" });
+      }
     },
   });
   const respondToInvitation = trpc.team.respondToInvitation.useMutation();
@@ -206,6 +241,22 @@ export default function Dashboard() {
                   Level {profile.level} · {profile.xp?.toLocaleString()} XP total
                 </p>
 
+                {profile.selectedBadge ? (
+                  <div className="mb-4 rounded-3xl border border-border/50 bg-muted/10 px-4 py-3 text-sm text-foreground">
+                    <div className="text-xs uppercase tracking-[0.35em] text-muted-foreground mb-1">Profile badge</div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-bold uppercase tracking-[0.25em] text-primary">
+                        {profile.selectedBadge.title}
+                      </span>
+                      <span className="text-xs text-muted-foreground">Displayed on your profile</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mb-4 rounded-3xl border border-border/50 bg-muted/10 px-4 py-3 text-sm text-muted-foreground">
+                    No profile badge selected. Choose one from Unlockables.
+                  </div>
+                )}
+
                 {/* XP Bar */}
                 <div>
                   <div className="flex justify-between text-xs text-muted-foreground mb-1.5">
@@ -229,6 +280,137 @@ export default function Dashboard() {
             </div>
           </motion.div>
         )}
+
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+          className="game-card p-6 mb-8"
+        >
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+            <div>
+              <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.4em] text-primary">
+                Journey
+              </div>
+              <h2 className="mt-4 text-3xl font-black">Quest Journey</h2>
+              <p className="mt-2 text-sm text-muted-foreground max-w-2xl">
+                Progress toward your next unlockables, streak goals, and the best quests to tackle next.
+              </p>
+            </div>
+            {journey && (
+              <div className="rounded-3xl border border-border/50 bg-background/80 p-4 text-sm">
+                <div className="font-semibold">{journey.availableQuestCount} active quests</div>
+                <div className="text-muted-foreground">Ready for you right now</div>
+              </div>
+            )}
+          </div>
+
+          {journeyLoading ? (
+            <div className="mt-6 grid gap-4 lg:grid-cols-3">
+              {Array.from({ length: 3 }, (_, index) => (
+                <div key={index} className="h-48 rounded-3xl bg-border/40 animate-pulse" />
+              ))}
+            </div>
+          ) : journey ? (
+            <div className="mt-6 grid gap-4 lg:grid-cols-3">
+              <div className="rounded-3xl border border-border/50 bg-background/80 p-5">
+                <div className="text-sm uppercase tracking-[0.3em] text-muted-foreground">Level progress</div>
+                <div className="mt-4 text-3xl font-black">Level {journey.currentLevel}</div>
+                <div className="mt-2 text-sm text-muted-foreground">
+                  {journey.currentXp.toLocaleString()} XP · {journey.xpToNextLevel.toLocaleString()} XP to next level
+                </div>
+                <div className="mt-4 h-3 rounded-full bg-muted/20 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-primary"
+                    style={{ width: `${Math.min(100, journey.xpProgressPercent)}%` }}
+                  />
+                </div>
+                <div className="mt-2 text-xs uppercase tracking-[0.3em] text-muted-foreground">
+                  {journey.xpProgressPercent}% to level {journey.currentLevel + 1}
+                </div>
+                <div className="mt-6 rounded-3xl border border-border/50 bg-muted/10 p-4">
+                  <div className="text-xs uppercase tracking-[0.25em] text-muted-foreground">Streak</div>
+                  <div className="mt-2 text-2xl font-black">{journey.streakCount} day{journey.streakCount === 1 ? "" : "s"}</div>
+                  {journey.dailyChallenge ? (
+                    <div className="mt-2 text-sm text-muted-foreground">
+                      {journey.dailyChallenge.completedToday ? "Daily challenge completed" : "Complete today to keep it alive"}
+                    </div>
+                  ) : (
+                    <div className="mt-2 text-sm text-muted-foreground">No active daily challenge right now.</div>
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-3xl border border-border/50 bg-background/80 p-5">
+                <div className="text-sm uppercase tracking-[0.3em] text-muted-foreground">Next unlockables</div>
+                <div className="mt-4 space-y-3">
+                  {journey.nextUnlockables.length === 0 ? (
+                    <div className="rounded-3xl border border-border/50 bg-muted/10 p-4 text-sm text-muted-foreground">
+                      You have earned all unlockables or there are no unlockables available.
+                    </div>
+                  ) : (
+                    journey.nextUnlockables.map((item) => (
+                      <div key={item.id} className="rounded-3xl border border-border/50 bg-background p-4">
+                        <div className="text-sm font-semibold">{item.title}</div>
+                        <div className="mt-2 text-xs text-muted-foreground">{item.label}</div>
+                        <div className="mt-3 flex items-center justify-between gap-2 text-sm font-semibold">
+                          <span>{item.current} / {item.needed}</span>
+                          <span>{Math.round(item.progress * 100)}%</span>
+                        </div>
+                        <div className="mt-2 h-2 rounded-full bg-muted/20 overflow-hidden">
+                          <div
+                            className="h-full rounded-full bg-primary"
+                            style={{ width: `${Math.min(100, item.progress * 100)}%` }}
+                          />
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-3xl border border-border/50 bg-background/80 p-5">
+                <div className="text-sm uppercase tracking-[0.3em] text-muted-foreground">Recommended quests</div>
+                <div className="mt-4 space-y-3">
+                  {journey.recommendedQuests.length === 0 ? (
+                    <div className="rounded-3xl border border-border/50 bg-muted/10 p-4 text-sm text-muted-foreground">
+                      No recommendation available. Explore the quest board to find something new.
+                    </div>
+                  ) : (
+                    journey.recommendedQuests.map((quest) => (
+                      <div key={quest.id} className="rounded-3xl border border-border/50 bg-background p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-sm font-semibold truncate">{quest.title}</div>
+                          <span className={`badge-${quest.difficulty}`}>{quest.difficulty.toUpperCase()}</span>
+                        </div>
+                        <div className="mt-2 text-xs text-muted-foreground">{quest.reason}</div>
+                        <div className="mt-3 flex items-center justify-between text-sm font-semibold">
+                          <span>{quest.xpReward} XP</span>
+                          <span className="text-muted-foreground">Quest</span>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {journey.milestoneHints.length > 0 && (
+                  <div className="mt-6 rounded-3xl border border-border/50 bg-muted/10 p-4 text-sm">
+                    <div className="text-xs uppercase tracking-[0.3em] text-muted-foreground mb-3">Milestone roadmap</div>
+                    <div className="space-y-2">
+                      {journey.milestoneHints.slice(0, 3).map((hint, index) => (
+                        <div key={index} className="rounded-2xl bg-background/80 px-3 py-2 text-sm text-foreground">
+                          {hint}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="mt-6 text-sm text-muted-foreground">No journey data available yet.</div>
+          )}
+        </motion.div>
 
         {/* Stats Grid */}
         <motion.div
@@ -261,22 +443,75 @@ export default function Dashboard() {
           ))}
         </motion.div>
 
+        {/* Milestones Section */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.23 }}
-          className="game-card p-6 mb-8"
+          transition={{ delay: 0.22 }}
+          className="mb-8"
         >
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="flex items-center justify-between mb-4">
             <div>
-              <h2 className="text-xl font-black tracking-wider">Unlockables</h2>
-              <p className="text-sm text-muted-foreground">
-                Track badges, titles, and rewards you can earn by completing quests.
-              </p>
+              <h2 className="text-xl font-black tracking-wider">MILESTONES</h2>
+              <p className="text-xs text-muted-foreground">Track your epic achievements</p>
             </div>
-            <Link href="/unlockables" className="btn-game px-4 py-2 text-xs">
-              VIEW UNLOCKABLES
+            <Link href="/unlockables" className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground hover:text-foreground">
+              View all rewards
             </Link>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {journeyLoading ? (
+              Array.from({ length: 3 }).map((_, i) => (
+                <div key={i} className="game-card p-5 animate-pulse h-32" />
+              ))
+            ) : journey?.milestones?.map((milestone: any) => (
+              <motion.div
+                key={milestone.id}
+                whileHover={{ y: -4 }}
+                className={`game-card p-5 relative overflow-hidden transition-all duration-300 ${
+                  milestone.isCompleted ? "border-primary/50 bg-primary/5" : "border-border/50 bg-background/50"
+                }`}
+              >
+                {/* Background Glow for Completed */}
+                {milestone.isCompleted && (
+                  <div className="absolute -right-8 -top-8 w-24 h-24 bg-primary/10 blur-3xl rounded-full" />
+                )}
+
+                <div className="flex items-start gap-4">
+                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                    milestone.isCompleted ? "bg-primary/20 text-primary" : "bg-muted/20 text-muted-foreground"
+                  }`}>
+                    <MilestoneIcon name={milestone.icon} size={24} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <h3 className="font-bold text-sm truncate">{milestone.title}</h3>
+                      {milestone.isCompleted && (
+                        <CheckCircle size={14} className="text-primary flex-shrink-0" />
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground line-clamp-1 mb-3">{milestone.description}</p>
+                    
+                    <div className="space-y-2">
+                      <div className="flex justify-between text-[10px] font-bold tracking-widest uppercase">
+                        <span className={milestone.isCompleted ? "text-primary" : "text-muted-foreground"}>
+                          {milestone.current} / {milestone.target}
+                        </span>
+                        <span className="text-muted-foreground">+{milestone.rewardXp} XP</span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-muted/20 overflow-hidden">
+                        <motion.div
+                          initial={{ width: 0 }}
+                          animate={{ width: `${milestone.progress}%` }}
+                          className={`h-full rounded-full ${milestone.isCompleted ? "bg-primary" : "bg-muted-foreground/40"}`}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            ))}
           </div>
         </motion.div>
 
@@ -647,7 +882,11 @@ export default function Dashboard() {
                     className="w-14 h-14 rounded-xl overflow-hidden flex-shrink-0 bg-muted flex items-center justify-center"
                     style={{ border: "1px solid oklch(0.2 0.02 260)" }}
                   >
-                    {row.submission.mediaType === "image" ? (
+                    {row.submission.mediaUrl?.startsWith("pending-review://") ? (
+                      <span className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground text-center px-1">
+                        Pending
+                      </span>
+                    ) : row.submission.mediaType === "image" ? (
                       <img
                         src={row.submission.mediaUrl}
                         alt="Proof"

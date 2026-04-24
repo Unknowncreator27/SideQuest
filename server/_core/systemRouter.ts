@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { notifyOwner } from "./notification";
+import { getAdminMetrics } from "../db";
 import { adminProcedure, publicProcedure, router } from "./trpc";
 
 export const systemRouter = router({
@@ -26,4 +27,9 @@ export const systemRouter = router({
         success: delivered,
       } as const;
     }),
+
+  adminMetrics: adminProcedure.query(async ({ ctx }) => {
+    const stats = await getAdminMetrics();
+    return stats;
+  }),
 });

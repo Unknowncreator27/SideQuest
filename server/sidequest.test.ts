@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculateLevel, xpForLevel, xpForNextLevel } from "./db";
+import { calculateLevel, xpForLevel, xpForNextLevel, getStreakState } from "./db";
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
 
@@ -186,5 +186,42 @@ describe("user.profile requires auth", () => {
     const ctx = makeCtx({ user: null });
     const caller = appRouter.createCaller(ctx);
     await expect(caller.user.profile()).rejects.toThrow();
+  });
+});
+
+describe("daily procedures require auth", () => {
+  it("throws UNAUTHORIZED for unauthenticated myStatus", async () => {
+    const ctx = makeCtx({ user: null });
+    const caller = appRouter.createCaller(ctx);
+    await expect(caller.daily.myStatus()).rejects.toThrow();
+  });
+
+  it("throws UNAUTHORIZED for unauthenticated complete", async () => {
+    const ctx = makeCtx({ user: null });
+    const caller = appRouter.createCaller(ctx);
+    await expect(caller.daily.complete({ challengeId: 1 })).rejects.toThrow();
+  });
+});
+
+describe("daily streak helper", () => {
+  it("keeps the streak when the last completion was yesterday", () => {
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const state = getStreakState(yesterday, new Date());
+    expect(state.isYesterday).toBe(true);
+    expect(state.shouldReset).toBe(false);
+  });
+
+  it("resets the streak when the last completion was older than yesterday", () => {
+    const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+    const state = getStreakState(twoDaysAgo, new Date());
+    expect(state.isToday).toBe(false);
+    expect(state.isYesterday).toBe(false);
+    expect(state.shouldReset).toBe(true);
+  });
+
+  it("detects today’s completion as current streak progress", () => {
+    const state = getStreakState(new Date(), new Date());
+    expect(state.isToday).toBe(true);
+    expect(state.shouldReset).toBe(false);
   });
 });

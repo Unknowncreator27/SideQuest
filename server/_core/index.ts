@@ -13,6 +13,7 @@ import { users, quests, unlockables, dailyChallenges } from "../../drizzle/schem
 import { eq } from "drizzle-orm";
 import bcrypt from "bcrypt";
 import { ENV } from "./env";
+import { recordRequest } from "./metrics";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -36,6 +37,31 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 async function startServer() {
   const app = express();
   const server = createServer(app);
+  // Track request traffic so admin metrics can report visitor network usage.
+  app.use((req, res, next) => {
+    const startIn = req.socket.bytesRead;
+    const startOut = req.socket.bytesWritten;
+    const visitorIp =
+      (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim() ||
+      req.socket.remoteAddress ||
+      "unknown";
+
+    res.on("finish", () => {
+      const bytesIn = req.socket.bytesRead - startIn;
+      const bytesOut = req.socket.bytesWritten - startOut;
+      recordRequest({
+        path: req.originalUrl || req.url,
+        method: req.method,
+        status: res.statusCode,
+        bytesIn: bytesIn > 0 ? bytesIn : 0,
+        bytesOut: bytesOut > 0 ? bytesOut : 0,
+        visitorIp,
+      });
+    });
+
+    next();
+  });
+
   // Configure body parser with larger size limit for file uploads
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
@@ -166,6 +192,30 @@ async function seedDefaultUnlockablesIfEmpty() {
         description: "Complete your first legendary quest.",
         category: "cosmetic" as const,
         criteria: "legendary_quest_completed",
+        imageUrl: null,
+      },
+      {
+        title: "Neon Visor",
+        description: "A glowing visor to show off during quests.",
+        category: "cosmetic" as const,
+        criteria: "shop_purchase_neon_visor",
+        priceXp: 200,
+        imageUrl: null,
+      },
+      {
+        title: "Shadow Cloak",
+        description: "A stealthy cloak that adds a mysterious edge.",
+        category: "cosmetic" as const,
+        criteria: "shop_purchase_shadow_cloak",
+        priceXp: 400,
+        imageUrl: null,
+      },
+      {
+        title: "Golden Frame",
+        description: "A gilded frame to highlight your profile badge.",
+        category: "cosmetic" as const,
+        criteria: "shop_purchase_golden_frame",
+        priceXp: 300,
         imageUrl: null,
       },
       {
