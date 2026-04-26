@@ -274,7 +274,7 @@ export default function Home() {
                 </div>
               </motion.div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                 {activity?.map((item, i) => (
                   <motion.div
                     key={item.id}
@@ -282,28 +282,60 @@ export default function Home() {
                     whileInView={{ opacity: 1, y: 0 }}
                     viewport={{ once: true }}
                     transition={{ delay: i * 0.1 }}
-                    className="game-card p-4 flex items-start gap-4 group hover:border-primary/40 transition-colors"
+                    className="game-card overflow-hidden flex flex-col group hover:border-primary/40 transition-all duration-300 hover:shadow-[0_0_30px_rgba(var(--primary-rgb),0.1)]"
                   >
-                    <div className="mt-1">
-                      {item.type === "quest_completion" ? (
-                        <Swords size={18} className="text-primary" />
-                      ) : item.type === "level_up" ? (
-                        <Zap size={18} className="text-yellow-400" />
-                      ) : (
-                        <Trophy size={18} className="text-purple-400" />
-                      )}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex justify-between items-start mb-1">
-                        <span className="text-sm font-black text-primary truncate" style={{ fontFamily: "Orbitron, monospace" }}>
-                          {item.userName}
-                        </span>
-                        <span className="text-[10px] text-muted-foreground whitespace-nowrap">
-                          {new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </span>
+                    {/* Post Header */}
+                    <div className="p-4 flex items-center gap-3 border-b border-white/5">
+                      <div className="w-8 h-8 rounded-full overflow-hidden bg-primary/20 border border-primary/30 flex items-center justify-center">
+                        {item.userAvatar ? (
+                          <img src={item.userAvatar} alt={item.userName} className="w-full h-full object-cover" />
+                        ) : (
+                          <span className="text-xs font-bold text-primary">{item.userName?.[0]?.toUpperCase()}</span>
+                        )}
                       </div>
-                      <p className="text-sm font-bold leading-tight mb-1">{item.title}</p>
-                      <p className="text-xs text-muted-foreground truncate">{item.detail}</p>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-black text-primary tracking-wider truncate" style={{ fontFamily: "Orbitron, monospace" }}>
+                          {item.userName}
+                        </div>
+                        <div className="text-[10px] text-muted-foreground">
+                          {new Date(item.createdAt).toLocaleDateString()}
+                        </div>
+                      </div>
+                      <div className="opacity-50">
+                        {item.type === "quest_completion" ? (
+                          <Swords size={14} className="text-primary" />
+                        ) : item.type === "level_up" ? (
+                          <Zap size={14} className="text-yellow-400" />
+                        ) : (
+                          <Trophy size={14} className="text-purple-400" />
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Post Content (Media) */}
+                    {item.mediaUrl && !item.mediaUrl.startsWith("pending-review://") ? (
+                      <div className="aspect-square relative overflow-hidden bg-black/40">
+                        {item.mediaType === "video" ? (
+                          <video src={item.mediaUrl} className="w-full h-full object-cover" muted loop onMouseEnter={e => e.currentTarget.play()} onMouseLeave={e => e.currentTarget.pause()} />
+                        ) : (
+                          <img src={item.mediaUrl} alt={item.title} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" />
+                        )}
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+                      </div>
+                    ) : (
+                      <div className="aspect-square flex flex-col items-center justify-center p-8 text-center bg-gradient-to-br from-primary/5 to-purple-500/5 border-b border-white/5">
+                         <div className="p-4 rounded-full bg-primary/10 mb-4">
+                           {item.type === "level_up" ? <Zap size={32} className="text-yellow-400" /> : <Trophy size={32} className="text-purple-400" />}
+                         </div>
+                         <div className="text-sm font-black uppercase tracking-widest mb-2">{item.type.replace('_', ' ')}</div>
+                         <div className="text-xs text-muted-foreground leading-relaxed">{item.detail}</div>
+                      </div>
+                    )}
+
+                    {/* Post Footer */}
+                    <div className="p-4">
+                      <h3 className="text-sm font-bold leading-tight mb-1 group-hover:text-primary transition-colors">{item.title}</h3>
+                      <p className="text-[11px] text-muted-foreground line-clamp-2">{item.detail}</p>
                     </div>
                   </motion.div>
                 ))}

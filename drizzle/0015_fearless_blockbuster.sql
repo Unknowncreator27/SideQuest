@@ -1,0 +1,1 @@
+ALTER TABLE `submissions` ADD `isPublic` boolean DEFAULT false NOT NULL;

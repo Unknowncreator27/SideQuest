@@ -147,6 +147,7 @@ export default function QuestDetail() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [lastSubmissionId, setLastSubmissionId] = useState<number | null>(null);
+  const [isPublic, setIsPublic] = useState(false);
 
   const alreadyCompleted = mySubmissions?.some(
     (s) => s.submission.questId === questId && s.submission.status === "approved"
@@ -223,6 +224,7 @@ const handleSubmit = async () => {
           mediaType: isVid ? "video" : "image",
           mimeType: file.type,
           fileName: file.name,
+          isPublic,
         });
 
         lastSubmissionId = submissionId;
@@ -236,6 +238,7 @@ const handleSubmit = async () => {
           questId,
           mediaType: isVid ? "video" : "image",
           note: "Media upload skipped - Firebase bucket not configured. Awaiting admin review.",
+          isPublic,
         });
 
         lastSubmissionId = fallbackResult.submissionId;
@@ -703,6 +706,19 @@ const handleSubmit = async () => {
             )}
 
             {/* Drop Zone */}
+            <div className="mb-4 flex items-center gap-2 p-3 rounded-xl bg-primary/5 border border-primary/20">
+              <input
+                type="checkbox"
+                id="isPublic"
+                checked={isPublic}
+                onChange={(e) => setIsPublic(e.target.checked)}
+                className="w-4 h-4 rounded border-primary/50 bg-background text-primary focus:ring-primary/50"
+              />
+              <label htmlFor="isPublic" className="text-sm font-medium cursor-pointer select-none">
+                Share my win to the global social feed 🌍
+              </label>
+            </div>
+
             <div
               onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
               onDragLeave={() => setDragOver(false)}

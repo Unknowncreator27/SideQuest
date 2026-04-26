@@ -492,6 +492,7 @@ const submissionRouter = router({
         mediaType: z.enum(["image", "video"]),
         mimeType: z.string(),
         fileName: z.string(),
+        isPublic: z.boolean().default(false),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -528,6 +529,7 @@ const submissionRouter = router({
         mediaKey: fileKey,
         status: "pending",
         teamMemberIds,
+        isPublic: input.isPublic,
       });
 
       return { submissionId, mediaUrl: url };  
@@ -540,6 +542,7 @@ const submissionRouter = router({
       questId: z.number(),
       mediaType: z.enum(["image", "video"]),
       note: z.string().optional().default("Media upload skipped - awaiting admin review"),
+      isPublic: z.boolean().default(false),
     })
   )
   .mutation(async ({ ctx, input }) => {
@@ -565,17 +568,15 @@ const submissionRouter = router({
     }
 
     const placeholderUrl = `pending-review://quest-${input.questId}/user-${ctx.user.id}/${Date.now()}`;
-    const placeholderKey = `pending/${ctx.user.id}/quest-${input.questId}/${randomSuffix()}`;
-
     const submissionId = await createSubmission({
       questId: input.questId,
       userId: ctx.user.id,
       mediaUrl: placeholderUrl,
       mediaType: input.mediaType,
-      mediaKey: placeholderKey,
+      mediaKey: "pending-review",
       status: "pending",
       teamMemberIds,
-      // note: input.note,        // Remove this line if your createSubmission doesn't support 'note'
+      isPublic: input.isPublic,
     });
 
     // Notify admin/owner

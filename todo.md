@@ -79,10 +79,10 @@
 - [ ] Add cosmetic shop with XP-purchasable items
 - [ ] Add unlockable effects: titles, boosts, cosmetic rewards
 
-## Home Screen Updates (IN PROGRESS)
+## Home Screen Updates (COMPLETE)
 - [x] Create social feed showing top quest completions
-- [x] Add live activity feed component
-- [ ] Implement user consent for photo sharing
+- [x] Add media-rich "Instagram-style" global activity feed
+- [x] Implement user consent for photo sharing (isPublic toggle)
 - [ ] Add AI-powered image quality assessment
 
 ## Future Roadmap
