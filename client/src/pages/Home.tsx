@@ -13,6 +13,7 @@ import {
   Zap,
 } from "lucide-react";
 import { Link } from "wouter";
+import { StoryStrip, type StoryItem } from "@/components/Stories";
 
 const FEATURES = [
   {
@@ -85,8 +86,28 @@ export default function Home() {
   const { isAuthenticated } = useAuth();
   const { data: leaderboard } = trpc.user.leaderboard.useQuery();
   const { data: quests } = trpc.quest.list.useQuery({ status: "active" });
-  const { data: activity } = trpc.activity.global.useQuery({ limit: 6 });
+  const { data: activity } = trpc.activity.global.useQuery({ limit: 20 });
 
+  // Stories: only approved public submissions with real media
+const stories: StoryItem[] = (activity ?? [])
+  .filter(
+    (item): item is typeof item & { mediaUrl: string; mediaType: "video" | "image"; userAvatar: string | null } =>
+      "mediaUrl" in item &&
+      !!item.mediaUrl &&
+      !item.mediaUrl.startsWith("pending-review://") &&
+      item.type === "quest_completion"
+  )
+  .map((item) => ({
+    id: String(item.id),
+    type: item.type,
+    userName: item.userName,
+    userAvatar: item.userAvatar ?? null,
+    title: item.title,
+    detail: item.detail,
+    mediaUrl: item.mediaUrl ?? null,
+    mediaType: item.mediaType ?? null,
+    createdAt: item.createdAt,
+  }));
   const particles = Array.from({ length: 20 }, (_, i) => ({
     delay: i * 0.3,
     x: (i * 17 + 5) % 95,
@@ -251,6 +272,19 @@ export default function Home() {
         </div>
       </section>
 
+      {/* Stories Strip */}
+      {stories.length > 0 && (
+        <div className="container pt-6">
+          <div className="flex items-center gap-2 mb-3">
+            <Zap size={14} className="text-primary" />
+            <span className="text-xs font-black tracking-widest uppercase text-muted-foreground">
+              Victory Stories
+            </span>
+          </div>
+          <StoryStrip stories={stories} />
+        </div>
+      )}
+
       {/* Activity Feed Section */}
       <section className="py-12 relative overflow-hidden">
         <div className="container">
@@ -275,7 +309,7 @@ export default function Home() {
               </motion.div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                {activity?.map((item, i) => (
+                {(activity ?? []).slice(0, 6).map((item, i) => (
                   <motion.div
                     key={item.id}
                     initial={{ opacity: 0, y: 20 }}
@@ -287,8 +321,8 @@ export default function Home() {
                     {/* Post Header */}
                     <div className="p-4 flex items-center gap-3 border-b border-white/5">
                       <div className="w-8 h-8 rounded-full overflow-hidden bg-primary/20 border border-primary/30 flex items-center justify-center">
-                        {item.userAvatar ? (
-                          <img src={item.userAvatar} alt={item.userName} className="w-full h-full object-cover" />
+                        {"userAvatar" in item && item.userAvatar ? (
+                        <img src={item.userAvatar} alt={item.userName} className="w-full h-full object-cover" />
                         ) : (
                           <span className="text-xs font-bold text-primary">{item.userName?.[0]?.toUpperCase()}</span>
                         )}
@@ -313,9 +347,9 @@ export default function Home() {
                     </div>
 
                     {/* Post Content (Media) */}
-                    {item.mediaUrl && !item.mediaUrl.startsWith("pending-review://") ? (
-                      <div className="aspect-square relative overflow-hidden bg-black/40">
-                        {item.mediaType === "video" ? (
+                    {"mediaUrl" in item && item.mediaUrl && !item.mediaUrl.startsWith("pending-review://") ? (
+                    <div className="aspect-square relative overflow-hidden bg-black/40">
+                      {"mediaType" in item && item.mediaType === "video" ? (
                           <video src={item.mediaUrl} className="w-full h-full object-cover" muted loop onMouseEnter={e => e.currentTarget.play()} onMouseLeave={e => e.currentTarget.pause()} />
                         ) : (
                           <img src={item.mediaUrl} alt={item.title} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" />

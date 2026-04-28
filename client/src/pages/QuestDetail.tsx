@@ -705,18 +705,41 @@ const handleSubmit = async () => {
               </div>
             )}
 
-            {/* Drop Zone */}
-            <div className="mb-4 flex items-center gap-2 p-3 rounded-xl bg-primary/5 border border-primary/20">
-              <input
-                type="checkbox"
-                id="isPublic"
-                checked={isPublic}
-                onChange={(e) => setIsPublic(e.target.checked)}
-                className="w-4 h-4 rounded border-primary/50 bg-background text-primary focus:ring-primary/50"
-              />
-              <label htmlFor="isPublic" className="text-sm font-medium cursor-pointer select-none">
-                Share my win to the global social feed 🌍
-              </label>
+            {/* Share consent toggle */}
+            <div
+              className="mb-4 flex items-center gap-3 p-4 rounded-xl cursor-pointer select-none transition-all duration-200"
+              style={{
+                background: isPublic ? "oklch(0.72 0.22 165 / 0.08)" : "oklch(0.12 0.015 260)",
+                border: isPublic ? "1px solid oklch(0.72 0.22 165 / 0.35)" : "1px solid oklch(0.2 0.02 260)",
+              }}
+              onClick={() => setIsPublic((v) => !v)}
+            >
+              {/* Custom toggle */}
+              <div
+                className="relative flex-shrink-0 w-10 h-6 rounded-full transition-all duration-200"
+                style={{
+                  background: isPublic
+                    ? "linear-gradient(90deg, oklch(0.72 0.22 165), oklch(0.65 0.22 240))"
+                    : "oklch(0.22 0.02 260)",
+                  boxShadow: isPublic ? "0 0 10px oklch(0.72 0.22 165 / 0.4)" : "none",
+                }}
+              >
+                <div
+                  className="absolute top-1 w-4 h-4 rounded-full transition-all duration-200"
+                  style={{
+                    left: isPublic ? "calc(100% - 20px)" : "4px",
+                    background: "oklch(0.95 0.01 260)",
+                  }}
+                />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-bold">
+                  Share my victory to Stories 🌍
+                </div>
+                <div className="text-xs text-muted-foreground mt-0.5">
+                  Your proof photo will appear in the home feed for everyone to see
+                </div>
+              </div>
             </div>
 
             <div
