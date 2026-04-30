@@ -36,6 +36,7 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 
 async function startServer() {
   const app = express();
+  app.set("trust proxy", true);
   const server = createServer(app);
   // Track request traffic so admin metrics can report visitor network usage.
   app.use((req, res, next) => {

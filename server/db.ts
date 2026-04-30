@@ -36,10 +36,21 @@ let _db: ReturnType<typeof drizzle> | null = null;
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
+      const dbUrl = new URL(process.env.DATABASE_URL);
+      const sslEnabled = dbUrl.searchParams.get("ssl-mode")?.toLowerCase() === "required";
+      if (sslEnabled) {
+        dbUrl.searchParams.delete("ssl-mode");
+      }
+
       const connection = await mysql.createConnection({
-        uri: process.env.DATABASE_URL,
-        ssl: true, // Enable SSL for Aiven
+        host: dbUrl.hostname,
+        port: Number(dbUrl.port) || 3306,
+        user: decodeURIComponent(dbUrl.username),
+        password: decodeURIComponent(dbUrl.password),
+        database: dbUrl.pathname?.slice(1) || undefined,
+        ssl: sslEnabled ? { rejectUnauthorized: true } : undefined,
       });
+
       _db = drizzle(connection);
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);

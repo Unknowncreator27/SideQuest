@@ -156,6 +156,9 @@ class SDKServer {
 
   private getSessionSecret() {
     const secret = ENV.cookieSecret;
+    if (!secret || secret.length === 0) {
+      throw new Error("[Auth] JWT secret is not configured. Set JWT_SECRET in environment variables.");
+    }
     return new TextEncoder().encode(secret);
   }
 
