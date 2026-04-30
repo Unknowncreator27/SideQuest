@@ -35,6 +35,24 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 }
 
 async function startServer() {
+  // Validate required environment variables
+  const requiredEnvVars = [
+    'DATABASE_URL',
+    'JWT_SECRET',
+    'VITE_APP_ID',
+    'FIREBASE_PROJECT_ID',
+    'FIREBASE_CLIENT_EMAIL',
+    'FIREBASE_PRIVATE_KEY'
+  ];
+
+  const missing = requiredEnvVars.filter(key => !process.env[key]);
+  if (missing.length > 0) {
+    console.error(`[Startup] Missing required environment variables: ${missing.join(', ')}`);
+    process.exit(1);
+  }
+
+  console.log('[Startup] All required environment variables are set');
+
   const app = express();
   app.set("trust proxy", true);
   const server = createServer(app);
