@@ -65,14 +65,14 @@ const verifyEmailSchema = z.object({
 
 // Email sending utilities (replace with actual email service)
 async function sendVerificationEmail(email: string, token: string): Promise<void> {
-  const verificationUrl = `${process.env.VITE_APP_URL || 'http://localhost:3007'}/verify-email?token=${token}`;
+  const verificationUrl = `${process.env.VITE_APP_URL || 'https://https://sidequest-1xbo.onrender.com/'}verify-email?token=${token}`;
   console.log(`[Email] Verification email to ${email}:`);
   console.log(`Click here to verify: ${verificationUrl}`);
   // TODO: Replace with actual email service (SendGrid, AWS SES, etc.)
 }
 
 async function sendPasswordResetEmail(email: string, token: string): Promise<void> {
-  const resetUrl = `${process.env.VITE_APP_URL || 'http://localhost:3007'}/reset-password?token=${token}`;
+  const resetUrl = `${process.env.VITE_APP_URL || 'https://https://sidequest-1xbo.onrender.com/'}reset-password?token=${token}`;
   console.log(`[Email] Password reset email to ${email}:`);
   console.log(`Click here to reset password: ${resetUrl}`);
   // TODO: Replace with actual email service (SendGrid, AWS SES, etc.)
